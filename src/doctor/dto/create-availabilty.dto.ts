@@ -4,17 +4,18 @@ import {
   IsArray,
   ArrayNotEmpty,
   IsDate,
-  IsInt,
-  Min,
+  // IsInt,
+  // Min,
   IsOptional,
 } from 'class-validator';
 import { Session, Weekday } from '../enums/availability.enums';
 import { Type } from 'class-transformer';
 
 export class CreateDoctorAvailabilityDto {
+  @IsOptional()
   @Type(() => Date)
   @IsDate()
-  date: Date;
+  date?: Date;
 
   @IsString()
   consulting_start_time: string;
@@ -25,17 +26,18 @@ export class CreateDoctorAvailabilityDto {
   @IsEnum(Session)
   session: Session;
 
+  @IsOptional()
   @IsArray()
   @ArrayNotEmpty()
   @IsEnum(Weekday, { each: true })
-  weekdays: Weekday[];
+  weekdays?: Weekday[];
 
-  @IsInt()
-  @Min(5) // Minimum 5 minutes
-  slot_duration: number;
+  // @IsInt()
+  // @Min(5) // Minimum 5 minutes
+  // slot_duration: number;
 
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  patients_per_slot?: number;
+  // @IsOptional()
+  // @IsInt()
+  // @Min(1)
+  // patients_per_slot?: number;
 }
