@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -10,7 +11,7 @@ import { Doctor } from 'src/doctor/entities/doctor.entity';
 import { CreateDoctorAvailabilityDto } from './dto/create-availabilty.dto';
 import { DoctorAvailability } from './entities/doctor-availability.entity';
 import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
-import { TimeSlotStatus } from './enums/availability.enums';
+import { TimeSlotStatus, Weekday } from './enums/availability.enums';
 import { ScheduleType } from './enums/schedule-type.enums';
 
 @Injectable()
@@ -103,71 +104,97 @@ export class DoctorService {
       });
       if (!doctor) throw new NotFoundException('Doctor not found');
 
-      if (
-        doctor.schedule_type === ScheduleType.WAVE &&
-        (!dto.patients_per_slot || dto.patients_per_slot < 1)
-      ) {
+      if (!dto.date && (!dto.weekdays || dto.weekdays.length === 0)) {
         throw new BadRequestException(
-          'patients_per_slot must be provided for WAVE scheduling.',
+          'Either date or weekdays must be provided',
+        );
+      }
+      let datesToCreate: Date[] = [];
+
+      if (dto.date) {
+        const specificDate = dto.date; // dto.date instanceof Date ? dto.date : new Date(dto.date);
+        if (specificDate < new Date()) {
+          throw new BadRequestException('Date is in the past');
+        }
+        datesToCreate = [specificDate];
+      }
+      // If only weekdays are provided, create recurring availabilities
+      else if (dto.weekdays && dto.weekdays.length > 0) {
+        datesToCreate = this.generateDatesForWeekdays(dto.weekdays, 4); // Generate dates for next 4 weeks
+      }
+
+      const existingDates: string[] = [];
+      for (const date of datesToCreate) {
+        const existing = await this.availabilityRepo.findOne({
+          where: {
+            doctor: { user_id: doctorId },
+            date: date,
+            session: dto.session,
+          },
+        });
+
+        if (existing) {
+          existingDates.push(date.toDateString());
+        }
+      }
+
+      // If all dates already have availabilities, throw conflict error
+      if (existingDates.length === datesToCreate.length) {
+        throw new ConflictException(
+          `Availability already exists for the requested ${datesToCreate.length > 1 ? 'dates' : 'date'}: ${existingDates.join(', ')} (session: ${dto.session})`,
         );
       }
 
-      if (new Date(dto.date) < new Date(new Date().toDateString())) {
-        throw new BadRequestException('Date is in the past');
+      // If some dates have availabilities, filter them out
+      if (existingDates.length > 0) {
+        datesToCreate = datesToCreate.filter(
+          (date) => !existingDates.includes(date.toDateString()),
+        );
       }
 
-      const existing = await this.availabilityRepo.findOne({
-        where: {
-          doctor: { user_id: doctorId },
-          date: dto.date,
-          session: dto.session,
-          consulting_start_time: dto.consulting_start_time,
-          consulting_end_time: dto.consulting_end_time,
-        },
-      });
-      if (existing) throw new BadRequestException('Duplicate availability');
-
-      const availability = this.availabilityRepo.create({ ...dto, doctor });
-      await this.availabilityRepo.save(availability);
-
-      const slotTimes = this.generateSlots(
-        dto.consulting_start_time,
-        dto.consulting_end_time,
-        dto.slot_duration,
-      );
-      const slots = slotTimes.map(({ start, end }) => {
-        const timeSlot = this.timeSlotRepo.create({
-          date: dto.date,
-          session: dto.session,
-          start_time: start,
-          end_time: end,
-          status: TimeSlotStatus.AVAILABLE,
-          doctor,
-          availability,
+      const createdAvailabilities: DoctorAvailability[] = [];
+      for (const date of datesToCreate) {
+        // Check for existing availability on this date
+        const existing = await this.availabilityRepo.findOne({
+          where: {
+            doctor: { user_id: doctorId },
+            date: date,
+            session: dto.session,
+          },
         });
 
-        if (doctor.schedule_type === ScheduleType.WAVE) {
-          timeSlot.max_patients = dto.patients_per_slot || 3; // Default for WAVE schedule
-        } else {
-          timeSlot.max_patients = 1; // Default for STREAM schedule
+        if (existing) {
+          continue;
         }
-        return timeSlot;
-      });
+        const availability = this.availabilityRepo.create({
+          ...dto,
+          date: date,
+          doctor,
+          // Store weekdays only if we're using recurring pattern
+          weekdays: dto.date ? undefined : dto.weekdays,
+        });
 
-      await this.timeSlotRepo.save(slots);
-
+        await this.availabilityRepo.save(availability);
+        createdAvailabilities.push(availability);
+      }
       return {
-        message: 'Availability and slots created',
-        data: {
-          ...availability,
-          doctor: { ...doctor, user: doctor.user.profile },
-        },
+        message: 'Availability created',
+        data: createdAvailabilities.map((a) => ({
+          availability_id: a.availability_id,
+          date: a.date.toDateString(),
+          session: a.session,
+          consulting_start_time: a.consulting_start_time,
+          consulting_end_time: a.consulting_end_time,
+          weekdays: a.weekdays,
+        })),
       };
     } catch (error) {
       if (
         error instanceof NotFoundException ||
-        error instanceof BadRequestException
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
       ) {
+        console.log(error);
         throw error;
       }
       throw new InternalServerErrorException('Error creating availability');
@@ -284,5 +311,43 @@ export class DoctorService {
     }
 
     return slots;
+  }
+
+  private generateDatesForWeekdays(
+    weekdays: Weekday[],
+    weeksAhead: number,
+  ): Date[] {
+    const dates: Date[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const weekdayMap = {
+      [Weekday.Sunday]: 0,
+      [Weekday.Monday]: 1,
+      [Weekday.Tuesday]: 2,
+      [Weekday.Wednesday]: 3,
+      [Weekday.Thursday]: 4,
+      [Weekday.Friday]: 5,
+      [Weekday.Saturday]: 6,
+    };
+
+    // Generate dates for the specified number of weeks ahead
+    for (let week = 0; week < weeksAhead; week++) {
+      for (const weekday of weekdays) {
+        const targetDay = weekdayMap[weekday];
+        const date = new Date(today);
+
+        // Calculate days to add to reach the target weekday
+        const daysToAdd = ((targetDay + 7 - date.getDay()) % 7) + week * 7;
+        date.setDate(date.getDate() + daysToAdd);
+
+        // Only add future dates
+        if (date > today) {
+          dates.push(date);
+        }
+      }
+    }
+
+    return dates.sort((a, b) => a.getTime() - b.getTime());
   }
 }
