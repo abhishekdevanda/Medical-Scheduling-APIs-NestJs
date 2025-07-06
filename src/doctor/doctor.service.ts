@@ -8,7 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike, FindOptionsWhere } from 'typeorm';
 import { Doctor } from 'src/doctor/entities/doctor.entity';
-import { CreateDoctorAvailabilityDto } from './dto/create-availabilty.dto';
+import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
 import { DoctorAvailability } from './entities/doctor-availability.entity';
 import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
 import { TimeSlotStatus, Weekday } from './enums/availability.enums';
@@ -98,30 +98,15 @@ export class DoctorService {
 
   async createAvailability(doctorId: number, dto: CreateDoctorAvailabilityDto) {
     try {
+      const { bookingStartAt, bookingEndAt } =
+        this.validateAvailabilityDates(dto);
+      let { datesToCreate } = this.validateAvailabilityDates(dto);
+
       const doctor = await this.doctorRepo.findOne({
         where: { user_id: doctorId },
         relations: ['user'],
       });
       if (!doctor) throw new NotFoundException('Doctor not found');
-
-      if (!dto.date && (!dto.weekdays || dto.weekdays.length === 0)) {
-        throw new BadRequestException(
-          'Either date or weekdays must be provided',
-        );
-      }
-      let datesToCreate: Date[] = [];
-
-      if (dto.date) {
-        const specificDate = dto.date; // dto.date instanceof Date ? dto.date : new Date(dto.date);
-        if (specificDate < new Date()) {
-          throw new BadRequestException('Date is in the past');
-        }
-        datesToCreate = [specificDate];
-      }
-      // If only weekdays are provided, create recurring availabilities
-      else if (dto.weekdays && dto.weekdays.length > 0) {
-        datesToCreate = this.generateDatesForWeekdays(dto.weekdays, 4); // Generate dates for next 4 weeks
-      }
 
       const existingDates: string[] = [];
       for (const date of datesToCreate) {
@@ -154,24 +139,14 @@ export class DoctorService {
 
       const createdAvailabilities: DoctorAvailability[] = [];
       for (const date of datesToCreate) {
-        // Check for existing availability on this date
-        const existing = await this.availabilityRepo.findOne({
-          where: {
-            doctor: { user_id: doctorId },
-            date: date,
-            session: dto.session,
-          },
-        });
-
-        if (existing) {
-          continue;
-        }
         const availability = this.availabilityRepo.create({
           ...dto,
           date: date,
           doctor,
           // Store weekdays only if we're using recurring pattern
           weekdays: dto.date ? undefined : dto.weekdays,
+          booking_start_at: bookingStartAt,
+          booking_end_at: bookingEndAt,
         });
 
         await this.availabilityRepo.save(availability);
@@ -185,6 +160,14 @@ export class DoctorService {
           session: a.session,
           consulting_start_time: a.consulting_start_time,
           consulting_end_time: a.consulting_end_time,
+          booking_start_at:
+            a.booking_start_at.toDateString() +
+            ' ' +
+            a.booking_start_at.toTimeString().slice(0, 5),
+          booking_end_at:
+            a.booking_end_at.toDateString() +
+            ' ' +
+            a.booking_end_at.toTimeString().slice(0, 5),
           weekdays: a.weekdays,
         })),
       };
@@ -194,7 +177,6 @@ export class DoctorService {
         error instanceof BadRequestException ||
         error instanceof ConflictException
       ) {
-        console.log(error);
         throw error;
       }
       throw new InternalServerErrorException('Error creating availability');
@@ -276,43 +258,6 @@ export class DoctorService {
     }
   }
 
-  private generateSlots(
-    startTime: string,
-    endTime: string,
-    interval: number,
-  ): { start: string; end: string }[] {
-    const toMin = (t: string) => {
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
-    };
-
-    const toStr = (m: number) => {
-      const h = Math.floor(m / 60);
-      const min = m % 60;
-      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-    };
-
-    const startMins = toMin(startTime);
-    const endMins = toMin(endTime);
-
-    if (endMins <= startMins) {
-      throw new BadRequestException('End time must be after start time');
-    }
-
-    const slots: { start: string; end: string }[] = [];
-    let current = startMins;
-
-    while (current + interval <= endMins) {
-      slots.push({
-        start: toStr(current),
-        end: toStr(current + interval),
-      });
-      current += interval;
-    }
-
-    return slots;
-  }
-
   private generateDatesForWeekdays(
     weekdays: Weekday[],
     weeksAhead: number,
@@ -349,5 +294,66 @@ export class DoctorService {
     }
 
     return dates.sort((a, b) => a.getTime() - b.getTime());
+  }
+
+  private combineDateAndTime(date: Date, timeStr: string): Date {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const result = new Date(date);
+    result.setHours(hours, minutes, 0, 0);
+    return result;
+  }
+
+  private validateAvailabilityDates(dto: CreateDoctorAvailabilityDto) {
+    const now = new Date();
+
+    if (!dto.date && (!dto.weekdays || dto.weekdays.length === 0)) {
+      throw new BadRequestException('Either date or weekdays must be provided');
+    }
+
+    if (dto.date && dto.date < now) {
+      throw new BadRequestException('Consulting date must be in the future');
+    }
+    const bookingStartAt = this.combineDateAndTime(
+      dto.booking_start_date,
+      dto.booking_start_time,
+    );
+
+    const bookingEndAt = this.combineDateAndTime(
+      dto.booking_end_date,
+      dto.booking_end_time,
+    );
+
+    if (bookingStartAt < now || bookingEndAt < now) {
+      throw new BadRequestException(
+        'Booking start and end time cannot be in the past',
+      );
+    }
+
+    if (bookingStartAt >= bookingEndAt) {
+      throw new BadRequestException(
+        'Booking start time must be before booking end time',
+      );
+    }
+
+    let datesToCreate: Date[] = [];
+    if (dto.date) {
+      datesToCreate = [dto.date];
+    } else if (dto.weekdays && dto.weekdays.length > 0) {
+      datesToCreate = this.generateDatesForWeekdays(dto.weekdays, 4); // Generate dates for next 4 weeks
+    }
+
+    for (const date of datesToCreate) {
+      if (bookingStartAt < date || bookingEndAt < date) {
+        throw new BadRequestException(
+          `Booking time must be before the consulting date: ${date.toDateString()}`,
+        );
+      }
+    }
+
+    return {
+      bookingStartAt,
+      bookingEndAt,
+      datesToCreate,
+    };
   }
 }
