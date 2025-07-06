@@ -343,9 +343,16 @@ export class DoctorService {
     }
 
     for (const date of datesToCreate) {
-      if (bookingStartAt < date || bookingEndAt < date) {
+      const consulting_start_at = this.combineDateAndTime(
+        date,
+        dto.consulting_start_time,
+      );
+      if (
+        bookingStartAt > consulting_start_at ||
+        bookingEndAt > consulting_start_at
+      ) {
         throw new BadRequestException(
-          `Booking time must be before the consulting date: ${date.toDateString()}`,
+          `Booking time must be before the consulting start time: ${consulting_start_at.toDateString() + ' ' + consulting_start_at.toTimeString().slice(0, 5)}`,
         );
       }
     }
