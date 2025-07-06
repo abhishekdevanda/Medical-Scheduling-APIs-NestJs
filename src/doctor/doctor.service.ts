@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike, FindOptionsWhere } from 'typeorm';
 import { Doctor } from 'src/doctor/entities/doctor.entity';
 import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
+import { CreateTimeslotDto } from './dto/create-timeslot.dto';
 import { DoctorAvailability } from './entities/doctor-availability.entity';
 import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
 import { TimeSlotStatus, Weekday } from './enums/availability.enums';
@@ -180,6 +181,101 @@ export class DoctorService {
         throw error;
       }
       throw new InternalServerErrorException('Error creating availability');
+    }
+  }
+
+  async createTimeslots(doctorId: number, dto: CreateTimeslotDto) {
+    try {
+      const doctor = await this.doctorRepo.findOne({
+        where: {
+          user_id: doctorId,
+        },
+      });
+      if (!doctor) throw new NotFoundException('Doctor not found');
+
+      if (doctor.schedule_type === ScheduleType.WAVE && !dto.max_patients) {
+        throw new BadRequestException(
+          'max_patients is required for wave scheduling',
+        );
+      }
+
+      const availability = await this.availabilityRepo.findOne({
+        where: { availability_id: dto.availability_id },
+      });
+
+      if (!availability) throw new NotFoundException('Availability not found');
+
+      if (
+        dto.start_time > dto.end_time ||
+        dto.start_time > availability.consulting_end_time ||
+        dto.end_time > availability.consulting_end_time ||
+        dto.start_time < availability.consulting_start_time
+      )
+        throw new BadRequestException('Invalid start or end time');
+
+      const overlappingTimeslots = await this.timeSlotRepo.find({
+        where: {
+          doctor: { user_id: doctorId },
+          availability: { availability_id: dto.availability_id },
+        },
+      });
+
+      // Check if any existing time slot overlaps with the new one
+      const padTime = (t: string) => (t.length === 5 ? t + ':00' : t);
+      const hasOverlap = overlappingTimeslots.some((slot) => {
+        const dtoStart = padTime(dto.start_time);
+        const dtoEnd = padTime(dto.end_time);
+        return dtoStart < slot.end_time && dtoEnd > slot.start_time;
+      });
+
+      if (hasOverlap) {
+        // Find the conflicting slot for better error message
+        const conflictingSlot = overlappingTimeslots.find((slot) => {
+          const dtoStart = padTime(dto.start_time);
+          const dtoEnd = padTime(dto.end_time);
+          return dtoStart < slot.end_time && dtoEnd > slot.start_time;
+        });
+
+        throw new ConflictException(
+          `Time slot (${dto.start_time}-${dto.end_time}) overlaps with existing time slot (${conflictingSlot?.start_time}-${conflictingSlot?.end_time})`,
+        );
+      }
+      const newTimeslot = this.timeSlotRepo.create({
+        doctor,
+        availability,
+        date: availability.date,
+        session: availability.session,
+        start_time: dto.start_time,
+        end_time: dto.end_time,
+        max_patients:
+          doctor.schedule_type === ScheduleType.WAVE ? dto.max_patients : 1,
+        status: TimeSlotStatus.AVAILABLE,
+      });
+
+      const savedTimeslot = await this.timeSlotRepo.save(newTimeslot);
+
+      return {
+        message: 'Time slot created successfully',
+        data: {
+          timeslot_id: savedTimeslot.timeslot_id,
+          date: savedTimeslot.date,
+          session: savedTimeslot.session,
+          start_time: savedTimeslot.start_time,
+          end_time: savedTimeslot.end_time,
+          max_patients: savedTimeslot.max_patients,
+          status: savedTimeslot.status,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      console.log(error);
+      throw new InternalServerErrorException('Error creating time slots');
     }
   }
 
