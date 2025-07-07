@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, FindOptionsWhere } from 'typeorm';
+import { Repository, ILike, FindOptionsWhere, Not } from 'typeorm';
 import { Doctor } from 'src/doctor/entities/doctor.entity';
 import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
 import { CreateTimeslotDto } from './dto/create-timeslot.dto';
@@ -14,6 +14,7 @@ import { DoctorAvailability } from './entities/doctor-availability.entity';
 import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
 import { TimeSlotStatus, Weekday } from './enums/availability.enums';
 import { ScheduleType } from './enums/schedule-type.enums';
+import { UpdateTimeslotDto } from './dto/update-timeslot.dto';
 
 @Injectable()
 export class DoctorService {
@@ -276,6 +277,103 @@ export class DoctorService {
         throw error;
       }
       throw new InternalServerErrorException('Error creating time slots');
+    }
+  }
+
+  async updateTimeslot(
+    doctorId: number,
+    timeslotId: number,
+    dto: UpdateTimeslotDto,
+  ) {
+    try {
+      const doctor = await this.doctorRepo.findOne({
+        where: { user_id: doctorId },
+      });
+      if (!doctor) throw new NotFoundException('Doctor not found');
+
+      const timeslot = await this.timeSlotRepo.findOne({
+        where: {
+          timeslot_id: timeslotId,
+          doctor: { user_id: doctorId },
+          is_deleted: false,
+        },
+        relations: ['availability', 'appointments'],
+      });
+
+      if (!timeslot) {
+        throw new NotFoundException('Time slot not found');
+      }
+      if (
+        timeslot.status !== TimeSlotStatus.AVAILABLE ||
+        timeslot.appointments.length > 0
+      ) {
+        throw new BadRequestException(
+          'This timeslot cannot be updated because it is not available or has appointments booked',
+        );
+      }
+
+      const availability = timeslot.availability;
+      if (
+        dto.start_time > dto.end_time ||
+        dto.start_time > availability.consulting_end_time ||
+        dto.end_time > availability.consulting_end_time ||
+        dto.start_time < availability.consulting_start_time
+      ) {
+        throw new BadRequestException('Invalid start or end time');
+      }
+      const overlappingTimeslots = await this.timeSlotRepo.find({
+        where: {
+          doctor: { user_id: doctorId },
+          availability: { availability_id: availability.availability_id },
+          is_deleted: false,
+          timeslot_id: Not(timeslotId), // Exclude the current timeslot
+        },
+      });
+
+      // Checking if any existing time slot overlaps with the new one
+      const padTime = (t: string) => (t.length === 5 ? t + ':00' : t);
+      const hasOverlap = overlappingTimeslots.some((slot) => {
+        const dtoStart = padTime(dto.start_time);
+        const dtoEnd = padTime(dto.end_time);
+        return dtoStart < slot.end_time && dtoEnd > slot.start_time;
+      });
+
+      if (hasOverlap) {
+        const conflictingSlot = overlappingTimeslots.find((slot) => {
+          const dtoStart = padTime(dto.start_time);
+          const dtoEnd = padTime(dto.end_time);
+          return dtoStart < slot.end_time && dtoEnd > slot.start_time;
+        });
+
+        throw new ConflictException(
+          `Time slot (${dto.start_time}-${dto.end_time}) overlaps with existing time slot (${conflictingSlot?.start_time}-${conflictingSlot?.end_time})`,
+        );
+      }
+      if (timeslot.start_time) timeslot.start_time = dto.start_time;
+      if (timeslot.end_time) timeslot.end_time = dto.end_time;
+      if (timeslot.max_patients) timeslot.max_patients = dto.max_patients;
+      const updatedTimeslot = await this.timeSlotRepo.save(timeslot);
+      return {
+        message: 'Time slot updated successfully',
+        data: {
+          timeslot_id: updatedTimeslot.timeslot_id,
+          date: updatedTimeslot.date,
+          session: updatedTimeslot.session,
+          start_time: updatedTimeslot.start_time,
+          end_time: updatedTimeslot.end_time,
+          max_patients: updatedTimeslot.max_patients,
+          status: updatedTimeslot.status,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error updating time slot');
     }
   }
 
