@@ -10,6 +10,7 @@ import {
   Body,
   Patch,
   UnauthorizedException,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt.guard';
 import { Request } from 'express';
@@ -41,8 +42,8 @@ export class DoctorController {
   }
 
   @Get(':id')
-  async getDoctorDetails(@Param('id') id: string) {
-    return this.doctorService.getDoctorDetails(Number(id));
+  async getDoctorDetails(@Param('id', ParseIntPipe) id: number) {
+    return this.doctorService.getDoctorDetails(id);
   }
 
   @Get(':id/availability')
