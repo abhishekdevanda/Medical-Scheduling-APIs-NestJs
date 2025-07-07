@@ -696,5 +696,57 @@ export class DoctorService {
      };
   }
 
+    async softDeleteAvailability(
+    doctorUserId: number,
+    availabilityId: number,
+  ): Promise<{ message: string; availability_id: number }> {
+    const availability = await this.availabilityRepo.findOne({
+      where: { availability_id: availabilityId },
+      relations: ['doctor', 'time_slots'],
+    });
+
+    if (!availability) {
+      throw new NotFoundException('Availability not found');
+    }
+
+    if (availability.doctor.user_id !== doctorUserId) {
+      throw new ForbiddenException('You are not allowed to delete this availability');
+    }
+
+    if (availability.is_deleted) {
+      throw new BadRequestException('Availability already deleted');
+    }
+
+    const slotIds = availability.time_slots.map(slot => slot.timeslot_id);
+
+    if (slotIds.length > 0) {
+      const appointmentCount = await this.appointmentRepo.count({
+        where: {
+          time_slot: {
+            timeslot_id: In(slotIds),
+          },
+        },
+      });
+
+      if (appointmentCount > 0) {
+        throw new BadRequestException('Cannot delete availability with booked appointments');
+      }
+    }
+
+    availability.is_deleted = true;
+
+    for (const slot of availability.time_slots) {
+      slot.is_deleted = true;
+    }
+
+    await this.availabilityRepo.save(availability);
+
+    return {
+      message: 'Availability deleted successfully',
+      availability_id: availability.availability_id,
+    };
+  }
+
+
 
 }

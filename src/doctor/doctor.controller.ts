@@ -138,4 +138,17 @@ export class DoctorController {
     }
     return this.doctorService.deleteTimeslot(user.sub, timeslot_id);
   }
+
+  @Delete('availabilty/:availabilty_id')
+  @HttpCode(HttpStatus.OK)
+  async deleteAvailabilty(
+    @Param('availabilty_id', ParseIntPipe) availabilty_id: number,
+    @Req() req: Request,
+  ) {
+    const user = req.user as JwtPayload;
+    if (user.role !== UserRole.DOCTOR) {
+      throw new ForbiddenException('Unauthorized: Not a doctor');
+    }
+    return this.doctorService.softDeleteAvailability(user.sub, availabilty_id);
+  }
 }
