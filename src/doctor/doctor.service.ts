@@ -1,12 +1,13 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, FindOptionsWhere, Not } from 'typeorm';
+import { Repository, ILike, FindOptionsWhere, Not, In } from 'typeorm';
 import { Doctor } from 'src/doctor/entities/doctor.entity';
 import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
 import { CreateTimeslotDto } from './dto/create-timeslot.dto';
@@ -15,6 +16,8 @@ import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
 import { TimeSlotStatus, Weekday } from './enums/availability.enums';
 import { ScheduleType } from './enums/schedule-type.enums';
 import { UpdateTimeslotDto } from './dto/update-timeslot.dto';
+import { Appointment } from 'src/appointment/entities/appointment.entity';
+import { UpdateDoctorAvailabilityDto } from './dto/update-availabilty.dto';
 
 @Injectable()
 export class DoctorService {
@@ -25,6 +28,8 @@ export class DoctorService {
     private availabilityRepo: Repository<DoctorAvailability>,
     @InjectRepository(DoctorTimeSlot)
     private timeSlotRepo: Repository<DoctorTimeSlot>,
+    @InjectRepository(Appointment)
+    private appointmentRepo: Repository<Appointment>,
   ) {}
 
   async getProfile(doctorId: number) {
@@ -534,10 +539,19 @@ export class DoctorService {
   }
 
   private combineDateAndTime(date: Date, timeStr: string): Date {
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const result = new Date(date);
-    result.setHours(hours, minutes, 0, 0);
-    return result;
+  const [hours, minutes] = timeStr.split(':').map(Number);
+
+    const istDate = new Date(Date.UTC(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate(),
+      hours - 5,
+      minutes - 30,
+      0,
+      0
+    ));
+
+    return istDate;
   }
 
   private validateAvailabilityDates(dto: CreateDoctorAvailabilityDto) {
@@ -600,4 +614,87 @@ export class DoctorService {
       datesToCreate,
     };
   }
+
+    async updateAvailabilty(
+    doctorUserId: number,
+    availabilityId: number,
+    dto: UpdateDoctorAvailabilityDto,
+  ): Promise<{ message: string; availability_id: number }> {
+    const availability = await this.availabilityRepo.findOne({
+      where: {
+        availability_id: availabilityId,
+        is_deleted: false,
+      },
+      relations: ['doctor', 'time_slots'],
+    });
+
+    if (!availability) {
+      throw new NotFoundException('Availability not found');
+    }
+
+    if (availability.doctor.user_id !== doctorUserId) {
+      throw new ForbiddenException('You are not allowed to update this availability');
+    }
+
+    // Check if there are any appointments in this availability's slots
+    const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
+
+    if (slotIds.length > 0) {
+      const appointmentsCount = await this.appointmentRepo.count({
+        where: {
+          time_slot: {
+            timeslot_id: In(slotIds),
+          },
+        },
+      });
+
+      if (appointmentsCount > 0) {
+        throw new BadRequestException('Cannot update availability with active appointments');
+      }
+    }
+
+    // Apply updates — only update what exists in DTO
+    if (dto.consulting_start_time) {
+      availability.consulting_start_time = dto.consulting_start_time;
+    }
+
+    if (dto.consulting_end_time) {
+      availability.consulting_end_time = dto.consulting_end_time;
+    }
+
+    if (dto.session) {
+      availability.session = dto.session;
+    }
+
+    if (dto.date) {
+      availability.date = dto.date;
+    }
+
+    if (dto.weekdays) {
+      availability.weekdays = dto.weekdays;
+    }
+
+    if (dto.booking_start_date && dto.booking_start_time) {
+      availability.booking_start_at = this.combineDateAndTime(
+        dto.booking_start_date,
+        dto.booking_start_time,
+      );
+    }
+
+    if (dto.booking_end_date && dto.booking_end_time) {
+      availability.booking_end_at = this.combineDateAndTime(
+        dto.booking_end_date,
+        dto.booking_end_time,
+      );
+    }
+
+     await this.availabilityRepo.save(availability);
+
+     return {
+      message: 'Availabilty Updated Successfully',
+      availability_id: availability.availability_id
+     };
+  }
+
+
 }

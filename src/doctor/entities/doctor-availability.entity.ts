@@ -52,6 +52,9 @@ export class DoctorAvailability {
   @UpdateDateColumn()
   updated_at: Date;
 
+  @Column({ type: 'boolean', default: false })
+  is_deleted: boolean;
+
   // Relationships
   @ManyToOne(() => Doctor, (doctor) => doctor.availabilities, {
     onDelete: 'CASCADE',
