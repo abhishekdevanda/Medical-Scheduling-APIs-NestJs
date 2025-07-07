@@ -20,8 +20,9 @@ import { DoctorService } from './doctor.service';
 import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
 import { JwtPayload } from 'src/auth/auth.service';
 import { UserRole } from 'src/auth/enums/user.enums';
-import { UpdateScheduleDto } from './dto/update-schedule.dto';
+import { UpdateScheduleTypeDto } from './dto/update-schedule-type.dto';
 import { CreateTimeslotDto } from './dto/create-timeslot.dto';
+import { UpdateTimeslotDto } from './dto/update-timeslot.dto';
 
 @Controller('api/v1/doctors')
 @UseGuards(JwtAuthGuard)
@@ -81,10 +82,10 @@ export class DoctorController {
     return this.doctorService.createTimeslots(user.sub, dto);
   }
 
-  // Patch Requests
+  // Update Requests
   @Patch('schedule_type')
   async updateScheduleType(
-    @Body() dto: UpdateScheduleDto,
+    @Body() dto: UpdateScheduleTypeDto,
     @Req() req: Request,
   ) {
     const user = req.user as JwtPayload;
@@ -92,6 +93,20 @@ export class DoctorController {
       throw new ForbiddenException('Unauthorized: Not a doctor');
     }
     return this.doctorService.updateScheduleType(user.sub, dto.schedule_type);
+  }
+
+  @Patch('timeslot/:timeslot_id')
+  @HttpCode(HttpStatus.OK)
+  async updateTimeslot(
+    @Param('timeslot_id', ParseIntPipe) timeslot_id: number,
+    @Body() dto: UpdateTimeslotDto,
+    @Req() req: Request,
+  ) {
+    const user = req.user as JwtPayload;
+    if (user.role !== UserRole.DOCTOR) {
+      throw new ForbiddenException('Unauthorized: Not a doctor');
+    }
+    return this.doctorService.updateTimeslot(user.sub, timeslot_id, dto);
   }
 
   //Delete Requests
