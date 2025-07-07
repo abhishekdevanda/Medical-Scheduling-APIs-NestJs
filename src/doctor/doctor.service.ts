@@ -217,6 +217,7 @@ export class DoctorService {
         where: {
           doctor: { user_id: doctorId },
           availability: { availability_id: dto.availability_id },
+          is_deleted: false,
         },
       });
 
@@ -274,8 +275,49 @@ export class DoctorService {
       ) {
         throw error;
       }
-      console.log(error);
       throw new InternalServerErrorException('Error creating time slots');
+    }
+  }
+
+  async deleteTimeslot(doctorId: number, timeslotId: number) {
+    try {
+      const doctor = await this.doctorRepo.findOne({
+        where: { user_id: doctorId },
+      });
+      if (!doctor) throw new NotFoundException('Doctor not found');
+
+      const timeslot = await this.timeSlotRepo.findOne({
+        where: {
+          timeslot_id: timeslotId,
+          doctor: { user_id: doctorId },
+          is_deleted: false,
+        },
+        relations: ['appointments'],
+      });
+
+      if (!timeslot) {
+        throw new NotFoundException('Time slot not found');
+      }
+
+      if (
+        timeslot.status !== TimeSlotStatus.AVAILABLE ||
+        timeslot.appointments.length > 0
+      ) {
+        throw new BadRequestException(
+          'This timeslot cannot be deleted because it is not available or has appointments booked',
+        );
+      }
+      timeslot.is_deleted = true;
+      await this.timeSlotRepo.save(timeslot);
+      return { message: 'Timeslot deleted successfully' };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error deleting time slot');
     }
   }
 
@@ -292,6 +334,7 @@ export class DoctorService {
         where: {
           doctor: { user_id: doctorId },
           status: TimeSlotStatus.AVAILABLE,
+          is_deleted: false,
         },
         order: { date: 'ASC', session: 'ASC', start_time: 'ASC' },
         skip: (page - 1) * limit,

@@ -21,7 +21,7 @@ export class AppointmentService {
     @InjectRepository(Appointment)
     private appointmentRepo: Repository<Appointment>,
     @InjectRepository(DoctorTimeSlot)
-    private timeSlotRepo: Repository<DoctorTimeSlot>,
+    private timeslotRepo: Repository<DoctorTimeSlot>,
     @InjectRepository(Patient)
     private patientRepo: Repository<Patient>,
   ) {}
@@ -30,8 +30,8 @@ export class AppointmentService {
     try {
       const { doctor_id, timeslot_id } = dto;
 
-      const timeslot = await this.timeSlotRepo.findOne({
-        where: { timeslot_id },
+      const timeslot = await this.timeslotRepo.findOne({
+        where: { timeslot_id, is_deleted: false },
         relations: ['doctor', 'doctor.user', 'availability'],
       });
       if (!timeslot) {
@@ -109,7 +109,7 @@ export class AppointmentService {
 
       if (existingAppointmentsCount + 1 >= timeslot.max_patients) {
         timeslot.status = TimeSlotStatus.BOOKED;
-        await this.timeSlotRepo.save(timeslot);
+        await this.timeslotRepo.save(timeslot);
       }
 
       return {

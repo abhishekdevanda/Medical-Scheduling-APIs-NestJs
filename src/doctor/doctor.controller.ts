@@ -9,8 +9,10 @@ import {
   Post,
   Body,
   Patch,
-  UnauthorizedException,
   ParseIntPipe,
+  HttpCode,
+  HttpStatus,
+  Delete,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt.guard';
 import { Request } from 'express';
@@ -57,6 +59,7 @@ export class DoctorController {
 
   // Post Requests
   @Post('availability')
+  @HttpCode(HttpStatus.CREATED)
   async createAvailability(
     @Body() dto: CreateDoctorAvailabilityDto,
     @Req() req: Request,
@@ -69,6 +72,7 @@ export class DoctorController {
   }
 
   @Post('timeslot')
+  @HttpCode(HttpStatus.CREATED)
   async createTimeslots(@Body() dto: CreateTimeslotDto, @Req() req: Request) {
     const user = req.user as JwtPayload;
     if (user.role !== UserRole.DOCTOR) {
@@ -85,8 +89,22 @@ export class DoctorController {
   ) {
     const user = req.user as JwtPayload;
     if (user.role !== UserRole.DOCTOR) {
-      throw new UnauthorizedException('Unauthorized: Not a doctor');
+      throw new ForbiddenException('Unauthorized: Not a doctor');
     }
     return this.doctorService.updateScheduleType(user.sub, dto.schedule_type);
+  }
+
+  //Delete Requests
+  @Delete('timeslot/:timeslot_id')
+  @HttpCode(HttpStatus.OK)
+  async deleteTimeslot(
+    @Param('timeslot_id', ParseIntPipe) timeslot_id: number,
+    @Req() req: Request,
+  ) {
+    const user = req.user as JwtPayload;
+    if (user.role !== UserRole.DOCTOR) {
+      throw new ForbiddenException('Unauthorized: Not a doctor');
+    }
+    return this.doctorService.deleteTimeslot(user.sub, timeslot_id);
   }
 }
