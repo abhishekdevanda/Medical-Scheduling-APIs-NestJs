@@ -6,10 +6,16 @@ import { JwtStrategy } from 'src/auth/strategies/jwt.strategy';
 import { DoctorAvailability } from './entities/doctor-availability.entity';
 import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
 import { DoctorService } from './doctor.service';
+import { Appointment } from 'src/appointment/entities/appointment.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Doctor, DoctorAvailability, DoctorTimeSlot]),
+    TypeOrmModule.forFeature([
+      Doctor,
+      DoctorAvailability,
+      DoctorTimeSlot,
+      Appointment,
+    ]),
   ],
   controllers: [DoctorController],
   providers: [JwtStrategy, DoctorService],

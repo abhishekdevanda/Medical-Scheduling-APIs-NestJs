@@ -136,7 +136,7 @@ export class DoctorController {
     if (user.role !== UserRole.DOCTOR) {
       throw new ForbiddenException('Unauthorized: Not a doctor');
     }
-    return this.doctorService.deleteTimeslot(user.sub, timeslot_id);
+    return this.doctorService.softDeleteTimeslot(user.sub, timeslot_id);
   }
 
   @Delete('availabilty/:availabilty_id')
