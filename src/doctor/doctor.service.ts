@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, FindOptionsWhere, Not } from 'typeorm';
+import { Repository, ILike, FindOptionsWhere, Not, In } from 'typeorm';
 import { Doctor } from 'src/doctor/entities/doctor.entity';
 import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
 import { CreateTimeslotDto } from './dto/create-timeslot.dto';
@@ -15,6 +15,7 @@ import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
 import { TimeSlotStatus, Weekday } from './enums/availability.enums';
 import { ScheduleType } from './enums/schedule-type.enums';
 import { UpdateTimeslotDto } from './dto/update-timeslot.dto';
+import { Appointment } from 'src/appointment/entities/appointment.entity';
 
 @Injectable()
 export class DoctorService {
@@ -25,6 +26,8 @@ export class DoctorService {
     private availabilityRepo: Repository<DoctorAvailability>,
     @InjectRepository(DoctorTimeSlot)
     private timeSlotRepo: Repository<DoctorTimeSlot>,
+    @InjectRepository(Appointment)
+    private appointmentRepo: Repository<Appointment>,
   ) {}
 
   async getProfile(doctorId: number) {
@@ -297,22 +300,32 @@ export class DoctorService {
           doctor: { user_id: doctorId },
           is_deleted: false,
         },
-        relations: ['availability', 'appointments'],
+        relations: ['availability', 'availability.time_slots'],
       });
 
       if (!timeslot) {
         throw new NotFoundException('Time slot not found');
       }
-      if (
-        timeslot.status !== TimeSlotStatus.AVAILABLE ||
-        timeslot.appointments.length > 0
-      ) {
+
+      const availability = timeslot.availability;
+      const otherSlotIds = availability.time_slots.map(
+        (slot) => slot.timeslot_id,
+      );
+
+      const appointmentsCount = await this.appointmentRepo.count({
+        where: {
+          time_slot: {
+            timeslot_id: In(otherSlotIds),
+          },
+        },
+      });
+
+      if (appointmentsCount > 0) {
         throw new BadRequestException(
-          'This timeslot cannot be updated because it is not available or has appointments booked',
+          'Cannot update timeslot of a availability with active appointments',
         );
       }
 
-      const availability = timeslot.availability;
       if (
         dto.start_time > dto.end_time ||
         dto.start_time > availability.consulting_end_time ||
@@ -377,7 +390,7 @@ export class DoctorService {
     }
   }
 
-  async deleteTimeslot(doctorId: number, timeslotId: number) {
+  async softDeleteTimeslot(doctorId: number, timeslotId: number) {
     try {
       const doctor = await this.doctorRepo.findOne({
         where: { user_id: doctorId },
@@ -390,21 +403,32 @@ export class DoctorService {
           doctor: { user_id: doctorId },
           is_deleted: false,
         },
-        relations: ['appointments'],
+        relations: ['availability', 'availability.time_slots'],
       });
 
       if (!timeslot) {
         throw new NotFoundException('Time slot not found');
       }
 
-      if (
-        timeslot.status !== TimeSlotStatus.AVAILABLE ||
-        timeslot.appointments.length > 0
-      ) {
+      const availability = timeslot.availability;
+      const otherSlotIds = availability.time_slots.map(
+        (slot) => slot.timeslot_id,
+      );
+
+      const appointmentsCount = await this.appointmentRepo.count({
+        where: {
+          time_slot: {
+            timeslot_id: In(otherSlotIds),
+          },
+        },
+      });
+
+      if (appointmentsCount > 0) {
         throw new BadRequestException(
-          'This timeslot cannot be deleted because it is not available or has appointments booked',
+          'Cannot delete timeslot of a availability with active appointments',
         );
       }
+
       timeslot.is_deleted = true;
       await this.timeSlotRepo.save(timeslot);
       return { message: 'Timeslot deleted successfully' };
