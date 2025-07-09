@@ -96,7 +96,6 @@ export class DoctorController {
     return this.doctorService.updateScheduleType(user.sub, dto.schedule_type);
   }
 
-
   @Patch('availabilty/:availabilty_id')
   @HttpCode(HttpStatus.OK)
   async updateAvailabilty(

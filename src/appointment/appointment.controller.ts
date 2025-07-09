@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -13,11 +14,26 @@ import { Request } from 'express';
 import { JwtPayload } from 'src/auth/auth.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt.guard';
 import { UserRole } from 'src/auth/enums/user.enums';
+import { AppointmentStatus } from './enums/appointment-status.enum';
 
 @Controller('api/v1/appointments')
 @UseGuards(JwtAuthGuard)
 export class AppointmentController {
   constructor(private readonly appointmentService: AppointmentService) {}
+
+  @Get()
+  async viewAppointments(
+    @Req() req: Request,
+    @Query('status') status?: AppointmentStatus,
+  ) {
+    const user = req.user as JwtPayload;
+    return this.appointmentService.viewAppointments(
+      user.sub,
+      user.role,
+      status,
+    );
+  }
+
   @Post('create')
   async createAppointment(
     @Body() createAppointmentDto: CreateAppointmentDto,
@@ -32,11 +48,5 @@ export class AppointmentController {
       patientId,
       createAppointmentDto,
     );
-  }
-
-  @Get('view')
-  async viewAppointments(@Req() req: Request) {
-    const user = req.user as JwtPayload;
-    return this.appointmentService.viewAppointments(user.sub, user.role);
   }
 }

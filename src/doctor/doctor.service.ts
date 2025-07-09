@@ -560,17 +560,19 @@ export class DoctorService {
   }
 
   private combineDateAndTime(date: Date, timeStr: string): Date {
-  const [hours, minutes] = timeStr.split(':').map(Number);
+    const [hours, minutes] = timeStr.split(':').map(Number);
 
-    const istDate = new Date(Date.UTC(
-      date.getFullYear(),
-      date.getMonth(),
-      date.getDate(),
-      hours - 5,
-      minutes - 30,
-      0,
-      0
-    ));
+    const istDate = new Date(
+      Date.UTC(
+        date.getFullYear(),
+        date.getMonth(),
+        date.getDate(),
+        hours - 5,
+        minutes - 30,
+        0,
+        0,
+      ),
+    );
 
     return istDate;
   }
@@ -636,7 +638,7 @@ export class DoctorService {
     };
   }
 
-    async updateAvailabilty(
+  async updateAvailabilty(
     doctorUserId: number,
     availabilityId: number,
     dto: UpdateDoctorAvailabilityDto,
@@ -654,7 +656,9 @@ export class DoctorService {
     }
 
     if (availability.doctor.user_id !== doctorUserId) {
-      throw new ForbiddenException('You are not allowed to update this availability');
+      throw new ForbiddenException(
+        'You are not allowed to update this availability',
+      );
     }
 
     // Check if there are any appointments in this availability's slots
@@ -670,7 +674,9 @@ export class DoctorService {
       });
 
       if (appointmentsCount > 0) {
-        throw new BadRequestException('Cannot update availability with active appointments');
+        throw new BadRequestException(
+          'Cannot update availability with active appointments',
+        );
       }
     }
 
@@ -709,15 +715,15 @@ export class DoctorService {
       );
     }
 
-     await this.availabilityRepo.save(availability);
+    await this.availabilityRepo.save(availability);
 
-     return {
+    return {
       message: 'Availabilty Updated Successfully',
-      availability_id: availability.availability_id
-     };
+      availability_id: availability.availability_id,
+    };
   }
 
-    async softDeleteAvailability(
+  async softDeleteAvailability(
     doctorUserId: number,
     availabilityId: number,
   ): Promise<{ message: string; availability_id: number }> {
@@ -731,14 +737,16 @@ export class DoctorService {
     }
 
     if (availability.doctor.user_id !== doctorUserId) {
-      throw new ForbiddenException('You are not allowed to delete this availability');
+      throw new ForbiddenException(
+        'You are not allowed to delete this availability',
+      );
     }
 
     if (availability.is_deleted) {
       throw new BadRequestException('Availability already deleted');
     }
 
-    const slotIds = availability.time_slots.map(slot => slot.timeslot_id);
+    const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
 
     if (slotIds.length > 0) {
       const appointmentCount = await this.appointmentRepo.count({
@@ -750,7 +758,9 @@ export class DoctorService {
       });
 
       if (appointmentCount > 0) {
-        throw new BadRequestException('Cannot delete availability with booked appointments');
+        throw new BadRequestException(
+          'Cannot delete availability with booked appointments',
+        );
       }
     }
 
@@ -767,7 +777,4 @@ export class DoctorService {
       availability_id: availability.availability_id,
     };
   }
-
-
-
 }
