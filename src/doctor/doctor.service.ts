@@ -210,6 +210,13 @@ export class DoctorService {
         throw new NotFoundException('Availability not found');
       }
 
+      // Check if there are any time slots associated with this availability
+      if (availability.time_slots.length > 0) {
+        throw new ConflictException(
+          'Cannot update availability that has associated time slots',
+        );
+      }
+
       // Check if there are any appointments in this availability's slots
       const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
 
@@ -296,6 +303,13 @@ export class DoctorService {
 
     if (!availability) {
       throw new NotFoundException('Availability not found');
+    }
+
+    // Check if there are any time slots associated with this availability
+    if (availability.time_slots.length > 0) {
+      throw new ConflictException(
+        'Cannot update availability that has associated time slots',
+      );
     }
 
     const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
