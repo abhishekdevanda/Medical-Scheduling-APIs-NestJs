@@ -187,7 +187,6 @@ export class DoctorService {
       ) {
         throw error;
       }
-      console.log('Error creating availability:', error);
       throw new InternalServerErrorException('Error creating availability');
     }
   }
@@ -197,79 +196,89 @@ export class DoctorService {
     availabilityId: number,
     dto: UpdateDoctorAvailabilityDto,
   ): Promise<{ message: string; availability_id: number }> {
-    const availability = await this.availabilityRepo.findOne({
-      where: {
-        availability_id: availabilityId,
-        doctor: { user_id: doctorId },
-        is_deleted: false,
-      },
-      relations: ['doctor', 'time_slots'],
-    });
-
-    if (!availability) {
-      throw new NotFoundException('Availability not found');
-    }
-
-    // Check if there are any appointments in this availability's slots
-    const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
-
-    if (slotIds.length > 0) {
-      const appointmentsCount = await this.appointmentRepo.count({
+    try {
+      const availability = await this.availabilityRepo.findOne({
         where: {
-          time_slot: {
-            timeslot_id: In(slotIds),
-          },
+          availability_id: availabilityId,
+          doctor: { user_id: doctorId },
+          is_deleted: false,
         },
+        relations: ['doctor', 'time_slots'],
       });
 
-      if (appointmentsCount > 0) {
-        throw new BadRequestException(
-          'Cannot update availability with active appointments',
+      if (!availability) {
+        throw new NotFoundException('Availability not found');
+      }
+
+      // Check if there are any appointments in this availability's slots
+      const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
+
+      if (slotIds.length > 0) {
+        const appointmentsCount = await this.appointmentRepo.count({
+          where: {
+            time_slot: {
+              timeslot_id: In(slotIds),
+            },
+          },
+        });
+
+        if (appointmentsCount > 0) {
+          throw new ConflictException(
+            'Cannot update availability that have appointments',
+          );
+        }
+      }
+
+      // Apply updates — only update what exists in DTO
+      if (dto.consulting_start_time) {
+        availability.consulting_start_time = dto.consulting_start_time;
+      }
+
+      if (dto.consulting_end_time) {
+        availability.consulting_end_time = dto.consulting_end_time;
+      }
+
+      if (dto.session) {
+        availability.session = dto.session;
+      }
+
+      if (dto.date) {
+        availability.date = dto.date;
+      }
+
+      if (dto.weekdays) {
+        availability.weekdays = dto.weekdays;
+      }
+
+      if (dto.booking_start_date && dto.booking_start_time) {
+        availability.booking_start_at = this.combineDateAndTime(
+          dto.booking_start_date,
+          dto.booking_start_time,
         );
       }
+
+      if (dto.booking_end_date && dto.booking_end_time) {
+        availability.booking_end_at = this.combineDateAndTime(
+          dto.booking_end_date,
+          dto.booking_end_time,
+        );
+      }
+
+      await this.availabilityRepo.save(availability);
+
+      return {
+        message: 'Availabilty Updated Successfully',
+        availability_id: availability.availability_id,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error updating availability');
     }
-
-    // Apply updates — only update what exists in DTO
-    if (dto.consulting_start_time) {
-      availability.consulting_start_time = dto.consulting_start_time;
-    }
-
-    if (dto.consulting_end_time) {
-      availability.consulting_end_time = dto.consulting_end_time;
-    }
-
-    if (dto.session) {
-      availability.session = dto.session;
-    }
-
-    if (dto.date) {
-      availability.date = dto.date;
-    }
-
-    if (dto.weekdays) {
-      availability.weekdays = dto.weekdays;
-    }
-
-    if (dto.booking_start_date && dto.booking_start_time) {
-      availability.booking_start_at = this.combineDateAndTime(
-        dto.booking_start_date,
-        dto.booking_start_time,
-      );
-    }
-
-    if (dto.booking_end_date && dto.booking_end_time) {
-      availability.booking_end_at = this.combineDateAndTime(
-        dto.booking_end_date,
-        dto.booking_end_time,
-      );
-    }
-
-    await this.availabilityRepo.save(availability);
-
-    return {
-      message: 'Availabilty Updated Successfully',
-      availability_id: availability.availability_id,
-    };
   }
 
   async softDeleteAvailability(
@@ -302,7 +311,7 @@ export class DoctorService {
 
       if (appointmentCount > 0) {
         throw new BadRequestException(
-          'Cannot delete availability with booked appointments',
+          'Cannot delete availability that have appointments',
         );
       }
     }
@@ -468,7 +477,7 @@ export class DoctorService {
       });
       if (appointmentsCount > 0) {
         throw new ConflictException(
-          'Cannot update timeslot of a availability with active appointments',
+          'Cannot update timeslot of a availability that have appointments',
         );
       }
 
@@ -580,7 +589,7 @@ export class DoctorService {
 
       if (appointmentsCount > 0) {
         throw new ConflictException(
-          'Cannot delete timeslot of a availability with active appointments',
+          'Cannot delete timeslot of a availability that have appointments',
         );
       }
 

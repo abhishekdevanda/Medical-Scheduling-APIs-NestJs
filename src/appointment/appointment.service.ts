@@ -344,7 +344,6 @@ export class AppointmentService {
       ) {
         throw error;
       }
-      console.log('Error cancelling appointment:', error);
       throw new InternalServerErrorException('Error cancelling appointment');
     }
   }

@@ -107,7 +107,6 @@ export class DoctorController {
     if (user.role !== UserRole.DOCTOR) {
       throw new ForbiddenException('Unauthorized: Not a doctor');
     }
-    console.log('Updating availability with ID:', availability_id);
     return this.doctorService.updateAvailabilty(user.sub, availability_id, dto);
   }
 
