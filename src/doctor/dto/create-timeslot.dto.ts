@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  IsMilitaryTime,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class CreateTimeslotDto {
   @IsNotEmpty()
@@ -7,10 +13,12 @@ export class CreateTimeslotDto {
 
   @IsNotEmpty()
   @IsString()
+  @IsMilitaryTime()
   start_time: string;
 
   @IsNotEmpty()
   @IsString()
+  @IsMilitaryTime()
   end_time: string;
 
   @IsOptional()

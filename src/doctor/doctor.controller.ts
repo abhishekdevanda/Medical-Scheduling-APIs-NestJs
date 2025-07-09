@@ -62,7 +62,7 @@ export class DoctorController {
   // Post Requests
   @Post('availability')
   @HttpCode(HttpStatus.CREATED)
-  async createAvailability(
+  async newAvailability(
     @Body() dto: CreateDoctorAvailabilityDto,
     @Req() req: Request,
   ) {
@@ -70,17 +70,17 @@ export class DoctorController {
     if (user.role !== UserRole.DOCTOR) {
       throw new ForbiddenException('Access denied: Not a doctor');
     }
-    return this.doctorService.createAvailability(user.sub, dto);
+    return this.doctorService.newAvailability(user.sub, dto);
   }
 
   @Post('timeslot')
   @HttpCode(HttpStatus.CREATED)
-  async createTimeslots(@Body() dto: CreateTimeslotDto, @Req() req: Request) {
+  async newTimeslot(@Body() dto: CreateTimeslotDto, @Req() req: Request) {
     const user = req.user as JwtPayload;
     if (user.role !== UserRole.DOCTOR) {
       throw new ForbiddenException('Access denied: Not a doctor');
     }
-    return this.doctorService.createTimeslots(user.sub, dto);
+    return this.doctorService.newTimeslot(user.sub, dto);
   }
 
   // Update Requests
@@ -96,10 +96,10 @@ export class DoctorController {
     return this.doctorService.updateScheduleType(user.sub, dto.schedule_type);
   }
 
-  @Patch('availabilty/:availabilty_id')
+  @Patch('availability/:availability_id')
   @HttpCode(HttpStatus.OK)
   async updateAvailabilty(
-    @Param('availabilty_id', ParseIntPipe) availabilty_id: number,
+    @Param('availability_id', ParseIntPipe) availability_id: number,
     @Body() dto: UpdateDoctorAvailabilityDto,
     @Req() req: Request,
   ) {
@@ -107,7 +107,8 @@ export class DoctorController {
     if (user.role !== UserRole.DOCTOR) {
       throw new ForbiddenException('Unauthorized: Not a doctor');
     }
-    return this.doctorService.updateAvailabilty(user.sub, availabilty_id, dto);
+    console.log('Updating availability with ID:', availability_id);
+    return this.doctorService.updateAvailabilty(user.sub, availability_id, dto);
   }
 
   @Patch('timeslot/:timeslot_id')
@@ -125,6 +126,19 @@ export class DoctorController {
   }
 
   //Delete Requests
+  @Delete('availability/:availability_id')
+  @HttpCode(HttpStatus.OK)
+  async deleteAvailabilty(
+    @Param('availabilty_id', ParseIntPipe) availabilty_id: number,
+    @Req() req: Request,
+  ) {
+    const user = req.user as JwtPayload;
+    if (user.role !== UserRole.DOCTOR) {
+      throw new ForbiddenException('Unauthorized: Not a doctor');
+    }
+    return this.doctorService.softDeleteAvailability(user.sub, availabilty_id);
+  }
+
   @Delete('timeslot/:timeslot_id')
   @HttpCode(HttpStatus.OK)
   async deleteTimeslot(
@@ -136,18 +150,5 @@ export class DoctorController {
       throw new ForbiddenException('Unauthorized: Not a doctor');
     }
     return this.doctorService.softDeleteTimeslot(user.sub, timeslot_id);
-  }
-
-  @Delete('availabilty/:availabilty_id')
-  @HttpCode(HttpStatus.OK)
-  async deleteAvailabilty(
-    @Param('availabilty_id', ParseIntPipe) availabilty_id: number,
-    @Req() req: Request,
-  ) {
-    const user = req.user as JwtPayload;
-    if (user.role !== UserRole.DOCTOR) {
-      throw new ForbiddenException('Unauthorized: Not a doctor');
-    }
-    return this.doctorService.softDeleteAvailability(user.sub, availabilty_id);
   }
 }
