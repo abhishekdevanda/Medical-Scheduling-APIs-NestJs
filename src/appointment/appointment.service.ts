@@ -102,7 +102,9 @@ export class AppointmentService {
         patient,
         time_slot: timeslot,
         appointment_status: AppointmentStatus.SCHEDULED,
-        scheduled_on: new Date(),
+        scheduled_on: reporting_time,
+        reason: dto.reason,
+        notes: dto.notes,
       });
 
       await this.appointmentRepo.save(appointment);
@@ -278,6 +280,67 @@ export class AppointmentService {
       throw new InternalServerErrorException(
         'Error fetching upcoming appointments',
       );
+    }
+  }
+
+  async cancelAppointment(
+    appointmentId: number,
+    userId: number,
+    role: UserRole,
+  ) {
+    try {
+      const appointment = await this.appointmentRepo.findOne({
+        where: { appointment_id: appointmentId },
+        relations: ['doctor', 'patient'],
+      });
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
+      }
+      if (role === UserRole.PATIENT && appointment.patient.user_id !== userId) {
+        throw new ConflictException(
+          'You can only cancel your own appointments',
+        );
+      }
+      if (role === UserRole.DOCTOR && appointment.doctor.user_id !== userId) {
+        throw new ConflictException(
+          'You can only cancel your own appointments',
+        );
+      }
+      if (
+        appointment.appointment_status === AppointmentStatus.CANCELLED ||
+        appointment.appointment_status === AppointmentStatus.COMPLETED
+      ) {
+        throw new ConflictException(
+          'Appointment already cancelled or completed',
+        );
+      }
+
+      const now = new Date();
+      const reportingTime = new Date(appointment.scheduled_on);
+      const cancellationDeadline = new Date(
+        reportingTime.getTime() - 60 * 60 * 1000, // 1 hour before
+      );
+
+      if (now > cancellationDeadline) {
+        throw new ConflictException(
+          'You can only cancel appointments at least 1 hour before the reporting time',
+        );
+      }
+
+      appointment.appointment_status = AppointmentStatus.CANCELLED;
+      await this.appointmentRepo.save(appointment);
+
+      return {
+        message: 'Appointment cancelled successfully',
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error cancelling appointment');
     }
   }
 

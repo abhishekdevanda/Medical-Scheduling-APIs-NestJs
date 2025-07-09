@@ -2,6 +2,10 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
+  Patch,
+  Param,
   Post,
   Query,
   Req,
@@ -22,6 +26,7 @@ export class AppointmentController {
   constructor(private readonly appointmentService: AppointmentService) {}
 
   @Get()
+  @HttpCode(HttpStatus.OK)
   async viewAppointments(
     @Req() req: Request,
     @Query('status') status?: AppointmentStatus,
@@ -34,7 +39,8 @@ export class AppointmentController {
     );
   }
 
-  @Post('create')
+  @Post('new')
+  @HttpCode(HttpStatus.CREATED)
   async createAppointment(
     @Body() createAppointmentDto: CreateAppointmentDto,
     @Req() req: Request,
@@ -47,6 +53,20 @@ export class AppointmentController {
     return this.appointmentService.createAppointment(
       patientId,
       createAppointmentDto,
+    );
+  }
+
+  @Patch(':appointmentId/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancelAppointment(
+    @Req() req: Request,
+    @Param('appointmentId') appointmentId: number,
+  ) {
+    const user = req.user as JwtPayload;
+    return this.appointmentService.cancelAppointment(
+      appointmentId,
+      user.sub,
+      user.role,
     );
   }
 }
