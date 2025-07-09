@@ -32,6 +32,7 @@ export class DoctorController {
 
   // GET Requests
   @Get('profile')
+  @HttpCode(HttpStatus.OK)
   async getProfile(@Req() req: Request) {
     const user = req.user as JwtPayload;
     if (user.role !== UserRole.DOCTOR) {
@@ -41,16 +42,19 @@ export class DoctorController {
   }
 
   @Get('search')
+  @HttpCode(HttpStatus.OK)
   async searchDoctors(@Query('query') query: string) {
     return this.doctorService.searchDoctors(query);
   }
 
   @Get(':id')
+  @HttpCode(HttpStatus.OK)
   async getDoctorDetails(@Param('id', ParseIntPipe) id: number) {
     return this.doctorService.getDoctorDetails(id);
   }
 
   @Get(':id/availability')
+  @HttpCode(HttpStatus.OK)
   async getAvailability(
     @Param('id') id: number,
     @Query('page') page: number = 1,
@@ -85,6 +89,7 @@ export class DoctorController {
 
   // Update Requests
   @Patch('schedule_type')
+  @HttpCode(HttpStatus.OK)
   async updateScheduleType(
     @Body() dto: UpdateScheduleTypeDto,
     @Req() req: Request,
