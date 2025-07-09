@@ -53,8 +53,8 @@ export class DoctorController {
   @Get(':id/availability')
   async getAvailability(
     @Param('id') id: number,
-    @Query('page') page = 1,
-    @Query('limit') limit = 5,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 5,
   ) {
     return this.doctorService.getAvailableTimeSlots(id, page, limit);
   }
@@ -129,14 +129,14 @@ export class DoctorController {
   @Delete('availability/:availability_id')
   @HttpCode(HttpStatus.OK)
   async deleteAvailabilty(
-    @Param('availabilty_id', ParseIntPipe) availabilty_id: number,
+    @Param('availability_id', ParseIntPipe) availability_id: number,
     @Req() req: Request,
   ) {
     const user = req.user as JwtPayload;
     if (user.role !== UserRole.DOCTOR) {
       throw new ForbiddenException('Unauthorized: Not a doctor');
     }
-    return this.doctorService.softDeleteAvailability(user.sub, availabilty_id);
+    return this.doctorService.softDeleteAvailability(user.sub, availability_id);
   }
 
   @Delete('timeslot/:timeslot_id')

@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -123,6 +122,7 @@ export class DoctorService {
             doctor: { user_id: doctorId },
             date: date,
             session: dto.session,
+            is_deleted: false,
           },
         });
 
@@ -187,18 +187,20 @@ export class DoctorService {
       ) {
         throw error;
       }
+      console.log('Error creating availability:', error);
       throw new InternalServerErrorException('Error creating availability');
     }
   }
 
   async updateAvailabilty(
-    doctorUserId: number,
+    doctorId: number,
     availabilityId: number,
     dto: UpdateDoctorAvailabilityDto,
   ): Promise<{ message: string; availability_id: number }> {
     const availability = await this.availabilityRepo.findOne({
       where: {
         availability_id: availabilityId,
+        doctor: { user_id: doctorId },
         is_deleted: false,
       },
       relations: ['doctor', 'time_slots'],
@@ -206,12 +208,6 @@ export class DoctorService {
 
     if (!availability) {
       throw new NotFoundException('Availability not found');
-    }
-
-    if (availability.doctor.user_id !== doctorUserId) {
-      throw new ForbiddenException(
-        'You are not allowed to update this availability',
-      );
     }
 
     // Check if there are any appointments in this availability's slots
@@ -277,26 +273,20 @@ export class DoctorService {
   }
 
   async softDeleteAvailability(
-    doctorUserId: number,
+    doctorId: number,
     availabilityId: number,
   ): Promise<{ message: string; availability_id: number }> {
     const availability = await this.availabilityRepo.findOne({
-      where: { availability_id: availabilityId },
+      where: {
+        availability_id: availabilityId,
+        doctor: { user_id: doctorId },
+        is_deleted: false,
+      },
       relations: ['doctor', 'time_slots'],
     });
 
     if (!availability) {
       throw new NotFoundException('Availability not found');
-    }
-
-    if (availability.doctor.user_id !== doctorUserId) {
-      throw new ForbiddenException(
-        'You are not allowed to delete this availability',
-      );
-    }
-
-    if (availability.is_deleted) {
-      throw new BadRequestException('Availability already deleted');
     }
 
     const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
@@ -477,7 +467,7 @@ export class DoctorService {
         },
       });
       if (appointmentsCount > 0) {
-        throw new BadRequestException(
+        throw new ConflictException(
           'Cannot update timeslot of a availability with active appointments',
         );
       }
@@ -562,11 +552,6 @@ export class DoctorService {
 
   async softDeleteTimeslot(doctorId: number, timeslotId: number) {
     try {
-      const doctor = await this.doctorRepo.findOne({
-        where: { user_id: doctorId },
-      });
-      if (!doctor) throw new NotFoundException('Doctor not found');
-
       const timeslot = await this.timeslotRepo.findOne({
         where: {
           timeslot_id: timeslotId,
@@ -594,7 +579,7 @@ export class DoctorService {
       });
 
       if (appointmentsCount > 0) {
-        throw new BadRequestException(
+        throw new ConflictException(
           'Cannot delete timeslot of a availability with active appointments',
         );
       }
@@ -605,7 +590,7 @@ export class DoctorService {
     } catch (error) {
       if (
         error instanceof NotFoundException ||
-        error instanceof BadRequestException
+        error instanceof ConflictException
       ) {
         throw error;
       }
@@ -614,13 +599,6 @@ export class DoctorService {
   }
 
   async getAvailableTimeSlots(doctorId: number, page: number, limit: number) {
-    const doctor = await this.doctorRepo.findOne({
-      where: { user_id: doctorId },
-    });
-    if (!doctor) {
-      throw new BadRequestException('Invalid doctor ID');
-    }
-
     try {
       const [slots, count] = await this.timeslotRepo.findAndCount({
         where: {

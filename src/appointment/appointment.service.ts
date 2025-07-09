@@ -70,6 +70,7 @@ export class AppointmentService {
       const existingAppointmentInSession = await this.appointmentRepo.findOne({
         where: {
           patient: { user_id: patientId },
+          appointment_status: AppointmentStatus.SCHEDULED,
           time_slot: {
             doctor: { user_id: doctor.user_id },
             date: timeslot.date,
@@ -85,7 +86,10 @@ export class AppointmentService {
       }
 
       const existingAppointmentsCount = await this.appointmentRepo.count({
-        where: { time_slot: { timeslot_id: timeslot.timeslot_id } },
+        where: {
+          appointment_status: AppointmentStatus.SCHEDULED,
+          time_slot: { timeslot_id: timeslot.timeslot_id },
+        },
       });
 
       if (existingAppointmentsCount >= timeslot.max_patients) {
@@ -102,7 +106,7 @@ export class AppointmentService {
         patient,
         time_slot: timeslot,
         appointment_status: AppointmentStatus.SCHEDULED,
-        scheduled_on: reporting_time,
+        scheduled_on: new Date(),
         reason: dto.reason,
         notes: dto.notes,
       });
@@ -154,10 +158,10 @@ export class AppointmentService {
         if (status && status === AppointmentStatus.SCHEDULED) {
           const appointments = await this.appointmentRepo.find({
             where: {
-              doctor: { user_id: userId },
+              patient: { user_id: userId },
               appointment_status: AppointmentStatus.SCHEDULED,
             },
-            relations: ['patient', 'patient.user', 'time_slot'],
+            relations: ['doctor', 'doctor.user', 'time_slot'],
             order: { scheduled_on: 'ASC' },
           });
 
@@ -291,7 +295,7 @@ export class AppointmentService {
     try {
       const appointment = await this.appointmentRepo.findOne({
         where: { appointment_id: appointmentId },
-        relations: ['doctor', 'patient'],
+        relations: ['doctor', 'patient', 'time_slot'],
       });
       if (!appointment) {
         throw new NotFoundException('Appointment not found');
@@ -316,14 +320,14 @@ export class AppointmentService {
       }
 
       const now = new Date();
-      const reportingTime = new Date(appointment.scheduled_on);
-      const cancellationDeadline = new Date(
-        reportingTime.getTime() - 60 * 60 * 1000, // 1 hour before
+      const consultStartAt = this.combineDateAndTime(
+        appointment.time_slot.date,
+        appointment.time_slot.start_time,
       );
 
-      if (now > cancellationDeadline) {
+      if (now >= consultStartAt) {
         throw new ConflictException(
-          'You can only cancel appointments at least 1 hour before the reporting time',
+          'You can only cancel appointments before the consultation starts',
         );
       }
 
@@ -340,6 +344,7 @@ export class AppointmentService {
       ) {
         throw error;
       }
+      console.log('Error cancelling appointment:', error);
       throw new InternalServerErrorException('Error cancelling appointment');
     }
   }
@@ -406,5 +411,11 @@ export class AppointmentService {
       total: data.length,
       data,
     };
+  }
+  private combineDateAndTime(date: Date, timeStr: string): Date {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const result = new Date(date);
+    result.setHours(hours, minutes, 0, 0);
+    return result;
   }
 }

@@ -18,10 +18,12 @@ export class UpdateDoctorAvailabilityDto {
 
   @IsOptional()
   @IsString()
+  @IsMilitaryTime()
   consulting_start_time?: string;
 
   @IsOptional()
   @IsString()
+  @IsMilitaryTime()
   consulting_end_time?: string;
 
   @IsOptional()

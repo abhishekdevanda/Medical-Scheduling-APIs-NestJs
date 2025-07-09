@@ -3,7 +3,6 @@ import {
   PrimaryGeneratedColumn,
   ManyToOne,
   CreateDateColumn,
-  Unique,
   UpdateDateColumn,
   Column,
   JoinColumn,
@@ -14,7 +13,6 @@ import { Doctor } from 'src/doctor/entities/doctor.entity';
 import { AppointmentStatus } from '../enums/appointment-status.enum';
 
 @Entity('appointments')
-@Unique(['patient', 'time_slot']) // one appointment per patient per slot
 export class Appointment {
   @PrimaryGeneratedColumn()
   appointment_id: number;
