@@ -6,13 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Patient } from 'src/patient/entities/patient.entity';
 import { Appointment } from './entities/appointment.entity';
 import { DoctorTimeSlot } from 'src/doctor/entities/doctor-time-slot.entity';
 import { TimeSlotStatus } from 'src/doctor/enums/availability.enums';
 import { AppointmentStatus } from './enums/appointment-status.enum';
-import { CreateAppointmentDto } from './dto/new-appointment.dto';
+import { NewAppointmentDto } from './dto/new-appointment.dto';
 import { UserRole } from 'src/auth/enums/user.enums';
 import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 
@@ -27,7 +27,7 @@ export class AppointmentService {
     private patientRepo: Repository<Patient>,
   ) {}
 
-  async newAppointment(patientId: number, dto: CreateAppointmentDto) {
+  async newAppointment(patientId: number, dto: NewAppointmentDto) {
     try {
       const { doctor_id, timeslot_id } = dto;
 
@@ -37,6 +37,10 @@ export class AppointmentService {
       });
       if (!timeslot) {
         throw new NotFoundException('Time slot not found');
+      }
+
+      if (timeslot.status !== TimeSlotStatus.AVAILABLE) {
+        throw new ConflictException('Time slot is no longer available');
       }
 
       const availability = timeslot.availability;
@@ -62,10 +66,6 @@ export class AppointmentService {
         throw new NotFoundException('Patient not found');
       }
 
-      if (timeslot.status !== TimeSlotStatus.AVAILABLE) {
-        throw new ConflictException('Time slot is no longer available');
-      }
-
       const { doctor, ...timeSlotWithoutDoctor } = timeslot;
 
       const existingAppointmentInSession = await this.appointmentRepo.findOne({
@@ -74,8 +74,10 @@ export class AppointmentService {
           appointment_status: AppointmentStatus.SCHEDULED,
           time_slot: {
             doctor: { user_id: doctor.user_id },
-            date: timeslot.date,
-            session: timeslot.session,
+            availability: {
+              date: availability.date,
+              session: availability.session,
+            },
           },
         },
       });
@@ -296,7 +298,7 @@ export class AppointmentService {
     try {
       const appointment = await this.appointmentRepo.findOne({
         where: { appointment_id: appointmentId },
-        relations: ['doctor', 'patient', 'time_slot'],
+        relations: ['doctor', 'patient', 'time_slot', 'time_slot.availability'],
       });
       if (!appointment) {
         throw new NotFoundException('Appointment not found');
@@ -322,7 +324,7 @@ export class AppointmentService {
 
       const now = new Date();
       const consultStartAt = this.combineDateAndTime(
-        appointment.time_slot.date,
+        appointment.time_slot.availability.date,
         appointment.time_slot.start_time,
       );
 
@@ -352,7 +354,66 @@ export class AppointmentService {
   async rescheduleAppointments(
     doctorId: number,
     dto: RescheduleAppointmentDto,
-  ) {}
+  ) {
+    try {
+      // reschedule appointments that are provided by doctor
+      if (dto.appointment_ids && dto.appointment_ids.length > 0) {
+        const appointments = await this.appointmentRepo.find({
+          where: {
+            appointment_id: In(dto.appointment_ids),
+            doctor: { user_id: doctorId },
+            appointment_status: AppointmentStatus.SCHEDULED,
+            time_slot: {
+              availability: {
+                date: new Date(new Date().toISOString().split('T')[0]), // today's date
+              },
+            },
+          },
+          relations: [
+            'doctor',
+            'patient',
+            'time_slot',
+            'timeslot.availability',
+          ],
+        });
+        if (!appointments || appointments.length === 0) {
+          throw new NotFoundException('No appointments found');
+        }
+        console.log('Appointments to reschedule:', appointments);
+      } else {
+        const appointments = await this.appointmentRepo.find({
+          where: {
+            doctor: { user_id: doctorId },
+            appointment_status: AppointmentStatus.SCHEDULED,
+            time_slot: {
+              availability: {
+                date: new Date(new Date().toISOString().split('T')[0]), // today's date
+              },
+            },
+          },
+          relations: [
+            'doctor',
+            'patient',
+            'time_slot',
+            'time_slot.availability',
+          ],
+        });
+        if (!appointments || appointments.length === 0) {
+          throw new NotFoundException('No appointments found');
+        }
+        console.log('All appointments to reschedule:', appointments);
+      }
+      return;
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error rescheduling appointment');
+    }
+  }
 
   private calculateReportingTime(
     timeslot: DoctorTimeSlot,

@@ -1,6 +1,6 @@
 import { IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
-export class CreateAppointmentDto {
+export class NewAppointmentDto {
   @IsInt()
   doctor_id: number;
 

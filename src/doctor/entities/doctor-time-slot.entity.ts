@@ -10,22 +10,13 @@ import {
 } from 'typeorm';
 import { DoctorAvailability } from './doctor-availability.entity';
 import { Doctor } from './doctor.entity';
-import { Session, TimeSlotStatus } from '../enums/availability.enums';
+import { TimeSlotStatus } from '../enums/availability.enums';
 import { Appointment } from 'src/appointment/entities/appointment.entity';
 
 @Entity('doctor_time_slots')
 export class DoctorTimeSlot {
   @PrimaryGeneratedColumn()
   timeslot_id: number;
-
-  @Column({ type: 'date' })
-  date: Date;
-
-  @Column({
-    type: 'enum',
-    enum: Session,
-  })
-  session: Session;
 
   @Column({ type: 'time' })
   start_time: string;

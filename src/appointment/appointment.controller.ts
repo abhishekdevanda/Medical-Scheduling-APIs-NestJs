@@ -13,7 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AppointmentService } from './appointment.service';
-import { CreateAppointmentDto } from './dto/new-appointment.dto';
+import { NewAppointmentDto } from './dto/new-appointment.dto';
 import { Request } from 'express';
 import { JwtPayload } from 'src/auth/auth.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt.guard';
@@ -42,19 +42,13 @@ export class AppointmentController {
 
   @Post('new')
   @HttpCode(HttpStatus.CREATED)
-  async newAppointment(
-    @Body() createAppointmentDto: CreateAppointmentDto,
-    @Req() req: Request,
-  ) {
+  async newAppointment(@Req() req: Request, @Body() dto: NewAppointmentDto) {
     const user = req.user as JwtPayload;
     if (user.role !== UserRole.PATIENT) {
       throw new UnauthorizedException('Only patients can create appointments');
     }
     const patientId = user.sub;
-    return this.appointmentService.newAppointment(
-      patientId,
-      createAppointmentDto,
-    );
+    return this.appointmentService.newAppointment(patientId, dto);
   }
 
   @Patch(':appointmentId/cancel')
