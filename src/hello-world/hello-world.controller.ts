@@ -10,5 +10,3 @@ export class HelloWorldController {
     return this.service.getWelcomeMessage();
   }
 }
-
-

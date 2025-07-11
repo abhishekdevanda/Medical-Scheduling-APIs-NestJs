@@ -7,4 +7,3 @@ import { HelloWorldService } from './hello-world.service';
   providers: [HelloWorldService],
 })
 export class HelloWorldModule {}
-
