@@ -527,16 +527,4 @@ export class AppointmentService {
     result.setHours(hours, minutes, 0, 0);
     return result;
   }
-  private applyTimeShift(timeStr: string, shiftMinutes: number): string {
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const totalMinutes = hours * 60 + minutes + shiftMinutes;
-
-    const newHours = Math.floor(totalMinutes / 60);
-    const newMinutes = totalMinutes % 60;
-
-    return `${String(newHours).padStart(2, '0')}:${String(newMinutes).padStart(
-      2,
-      '0',
-    )}`;
-  }
 }
