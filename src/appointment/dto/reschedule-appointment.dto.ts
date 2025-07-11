@@ -2,15 +2,25 @@ import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsEnum,
   IsNotEmpty,
   IsNumber,
   IsOptional,
+  Max,
+  Min,
 } from 'class-validator';
+import { RescheduleType } from '../enums/reschedule-type.enum';
 
 export class RescheduleAppointmentDto {
-  @IsNumber()
   @IsNotEmpty()
+  @IsNumber()
+  @Min(10)
+  @Max(180)
   shift_minutes: number;
+
+  @IsNotEmpty()
+  @IsEnum(RescheduleType)
+  reschedule_type: RescheduleType;
 
   @IsOptional()
   @IsArray()

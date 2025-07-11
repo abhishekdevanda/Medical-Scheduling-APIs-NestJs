@@ -782,8 +782,14 @@ export class DoctorService {
       throw new BadRequestException('Either date or weekdays must be provided');
     }
 
-    if (dto.date && dto.date < now) {
-      throw new BadRequestException('Consulting date must be in the future');
+    if (dto.date) {
+      const consultingStartAt = this.combineDateAndTime(
+        dto.date,
+        dto.consulting_start_time,
+      );
+      if (consultingStartAt < now) {
+        throw new BadRequestException('Consulting date must be in the future');
+      }
     }
     const bookingStartAt = this.combineDateAndTime(
       dto.booking_start_date,

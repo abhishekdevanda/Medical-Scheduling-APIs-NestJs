@@ -15,6 +15,7 @@ import { AppointmentStatus } from './enums/appointment-status.enum';
 import { NewAppointmentDto } from './dto/new-appointment.dto';
 import { UserRole } from 'src/auth/enums/user.enums';
 import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
+import { RescheduleType } from './enums/reschedule-type.enum';
 
 @Injectable()
 export class AppointmentService {
@@ -66,7 +67,7 @@ export class AppointmentService {
         throw new NotFoundException('Patient not found');
       }
 
-      const { doctor, ...timeSlotWithoutDoctor } = timeslot;
+      const { doctor } = timeslot;
 
       const existingAppointmentInSession = await this.appointmentRepo.findOne({
         where: {
@@ -109,7 +110,10 @@ export class AppointmentService {
         patient,
         time_slot: timeslot,
         appointment_status: AppointmentStatus.SCHEDULED,
-        scheduled_on: new Date(),
+        scheduled_on: this.combineDateAndTime(
+          availability.date,
+          reporting_time,
+        ),
         reason: dto.reason,
         notes: dto.notes,
       });
@@ -124,8 +128,11 @@ export class AppointmentService {
       return {
         message: 'Appointment booked successfully',
         data: {
-          reporting_time,
           ...appointment,
+          scheduled_on:
+            appointment.scheduled_on.toDateString() +
+            ' ' +
+            appointment.scheduled_on.toTimeString().slice(0, 5),
           doctor: {
             ...doctor,
             user: { profile: doctor.user.profile },
@@ -134,7 +141,19 @@ export class AppointmentService {
             ...patient,
             user: { profile: patient.user.profile },
           },
-          time_slot: timeSlotWithoutDoctor,
+          time_slot: {
+            timeslot_id: timeslot.timeslot_id,
+            start_time: timeslot.start_time,
+            end_time: timeslot.end_time,
+            availability: {
+              availability_id: timeslot.availability.availability_id,
+              date: timeslot.availability.date,
+              session: timeslot.availability.session,
+              consulting_start_time:
+                timeslot.availability.consulting_start_time,
+              consulting_end_time: timeslot.availability.consulting_end_time,
+            },
+          },
         },
       };
     } catch (error) {
@@ -356,32 +375,34 @@ export class AppointmentService {
     dto: RescheduleAppointmentDto,
   ) {
     try {
-      // reschedule appointments that are provided by doctor
+      // find appointments to reschedule
+      let appointments: Appointment[];
+
       if (dto.appointment_ids && dto.appointment_ids.length > 0) {
-        const appointments = await this.appointmentRepo.find({
+        // find appointments that match the provided appointment_ids
+        const appointmentsToReschedule = await this.appointmentRepo.find({
           where: {
             appointment_id: In(dto.appointment_ids),
             doctor: { user_id: doctorId },
             appointment_status: AppointmentStatus.SCHEDULED,
-            time_slot: {
-              availability: {
-                date: new Date(new Date().toISOString().split('T')[0]), // today's date
-              },
-            },
           },
           relations: [
             'doctor',
             'patient',
             'time_slot',
-            'timeslot.availability',
+            'time_slot.availability',
           ],
         });
-        if (!appointments || appointments.length === 0) {
+        if (
+          !appointmentsToReschedule ||
+          appointmentsToReschedule.length === 0
+        ) {
           throw new NotFoundException('No appointments found');
         }
-        console.log('Appointments to reschedule:', appointments);
+        appointments = appointmentsToReschedule;
       } else {
-        const appointments = await this.appointmentRepo.find({
+        // find all appointments that are scheduled for today
+        const appointmentsToReschedule = await this.appointmentRepo.find({
           where: {
             doctor: { user_id: doctorId },
             appointment_status: AppointmentStatus.SCHEDULED,
@@ -398,16 +419,34 @@ export class AppointmentService {
             'time_slot.availability',
           ],
         });
-        if (!appointments || appointments.length === 0) {
+        if (
+          !appointmentsToReschedule ||
+          appointmentsToReschedule.length === 0
+        ) {
           throw new NotFoundException('No appointments found');
         }
-        console.log('All appointments to reschedule:', appointments);
+        appointments = appointmentsToReschedule;
       }
-      return;
+
+      appointments.forEach((appointment) => {
+        const shift =
+          dto.reschedule_type === RescheduleType.POSTPONE
+            ? dto.shift_minutes
+            : -dto.shift_minutes;
+        // Apply the time shift to the scheduled_on time
+        appointment.scheduled_on = new Date(
+          appointment.scheduled_on.getTime() + shift * 60 * 1000,
+        );
+      });
+      // Save the updated appointments
+      await this.appointmentRepo.save(appointments);
+      return {
+        message: 'Appointments rescheduled successfully',
+      };
     } catch (error) {
       if (
         error instanceof NotFoundException ||
-        error instanceof ConflictException
+        error instanceof BadRequestException
       ) {
         throw error;
       }
@@ -449,7 +488,10 @@ export class AppointmentService {
       return {
         appointment_id: appointment.appointment_id,
         appointment_status: appointment.appointment_status,
-        scheduled_on: appointment.scheduled_on,
+        scheduled_on:
+          appointment.scheduled_on.toDateString() +
+          ' ' +
+          appointment.scheduled_on.toTimeString().slice(0, 5),
         reason: appointment.reason,
         notes: appointment.notes,
         ...(role === UserRole.PATIENT
@@ -484,5 +526,17 @@ export class AppointmentService {
     const result = new Date(date);
     result.setHours(hours, minutes, 0, 0);
     return result;
+  }
+  private applyTimeShift(timeStr: string, shiftMinutes: number): string {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const totalMinutes = hours * 60 + minutes + shiftMinutes;
+
+    const newHours = Math.floor(totalMinutes / 60);
+    const newMinutes = totalMinutes % 60;
+
+    return `${String(newHours).padStart(2, '0')}:${String(newMinutes).padStart(
+      2,
+      '0',
+    )}`;
   }
 }
