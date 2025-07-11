@@ -195,7 +195,7 @@ export class DoctorService {
     doctorId: number,
     availabilityId: number,
     dto: UpdateDoctorAvailabilityDto,
-  ): Promise<{ message: string; availability_id: number }> {
+  ) {
     try {
       const availability = await this.availabilityRepo.findOne({
         where: {
@@ -212,9 +212,11 @@ export class DoctorService {
 
       // Check if there are any time slots associated with this availability
       if (availability.time_slots.length > 0) {
-        throw new ConflictException(
-          'Cannot update availability that has associated time slots',
-        );
+        if (availability.time_slots.some((slot) => !slot.is_deleted)) {
+          throw new ConflictException(
+            'Cannot update availability that has associated time slots',
+          );
+        }
       }
 
       // Check if there are any appointments in this availability's slots
@@ -225,6 +227,7 @@ export class DoctorService {
           where: {
             time_slot: {
               timeslot_id: In(slotIds),
+              is_deleted: false,
             },
           },
         });
@@ -275,7 +278,21 @@ export class DoctorService {
 
       return {
         message: 'Availabilty Updated Successfully',
-        availability_id: availability.availability_id,
+        data: {
+          availability_id: availability.availability_id,
+          date: availability.date,
+          session: availability.session,
+          consulting_start_time: availability.consulting_start_time,
+          consulting_end_time: availability.consulting_end_time,
+          booking_start_at:
+            availability.booking_start_at.toDateString() +
+            ' ' +
+            availability.booking_start_at.toTimeString().slice(0, 5),
+          booking_end_at:
+            availability.booking_end_at.toDateString() +
+            ' ' +
+            availability.booking_end_at.toTimeString().slice(0, 5),
+        },
       };
     } catch (error) {
       if (
@@ -307,9 +324,11 @@ export class DoctorService {
 
     // Check if there are any time slots associated with this availability
     if (availability.time_slots.length > 0) {
-      throw new ConflictException(
-        'Cannot update availability that has associated time slots',
-      );
+      if (availability.time_slots.some((slot) => !slot.is_deleted)) {
+        throw new ConflictException(
+          'Cannot delete availability that has associated time slots',
+        );
+      }
     }
 
     const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
@@ -319,6 +338,7 @@ export class DoctorService {
         where: {
           time_slot: {
             timeslot_id: In(slotIds),
+            is_deleted: false,
           },
         },
       });
@@ -423,8 +443,6 @@ export class DoctorService {
       const newTimeslot = this.timeslotRepo.create({
         doctor,
         availability,
-        date: availability.date,
-        session: availability.session,
         start_time: dto.start_time,
         end_time: dto.end_time,
         max_patients:
@@ -438,8 +456,8 @@ export class DoctorService {
         message: 'Time slot created successfully',
         data: {
           timeslot_id: savedTimeslot.timeslot_id,
-          date: savedTimeslot.date,
-          session: savedTimeslot.session,
+          date: savedTimeslot.availability.date,
+          session: savedTimeslot.availability.session,
           start_time: savedTimeslot.start_time,
           end_time: savedTimeslot.end_time,
           max_patients: savedTimeslot.max_patients,
@@ -501,7 +519,9 @@ export class DoctorService {
           padTime(dto.start_time) < availability.consulting_start_time ||
           padTime(dto.start_time) >= availability.consulting_end_time
         ) {
-          throw new BadRequestException('Invalid start time');
+          throw new BadRequestException(
+            'start time must be within availability hours',
+          );
         }
       }
       if (dto.end_time) {
@@ -509,7 +529,9 @@ export class DoctorService {
           padTime(dto.end_time) <= availability.consulting_start_time ||
           padTime(dto.end_time) > availability.consulting_end_time
         ) {
-          throw new BadRequestException('Invalid end time');
+          throw new BadRequestException(
+            'end time must be within availability hours',
+          );
         }
       }
       if (dto.start_time && dto.end_time) {
@@ -553,8 +575,8 @@ export class DoctorService {
         message: 'Time slot updated successfully',
         data: {
           timeslot_id: updatedTimeslot.timeslot_id,
-          date: updatedTimeslot.date,
-          session: updatedTimeslot.session,
+          date: updatedTimeslot.availability.date,
+          session: updatedTimeslot.availability.session,
           start_time: updatedTimeslot.start_time,
           end_time: updatedTimeslot.end_time,
           max_patients: updatedTimeslot.max_patients,
@@ -629,7 +651,13 @@ export class DoctorService {
           status: TimeSlotStatus.AVAILABLE,
           is_deleted: false,
         },
-        order: { date: 'ASC', session: 'ASC', start_time: 'ASC' },
+        order: {
+          availability: {
+            date: 'ASC',
+            session: 'ASC',
+          },
+          start_time: 'ASC',
+        },
         skip: (page - 1) * limit,
         take: limit,
         relations: ['availability'],
@@ -650,8 +678,8 @@ export class DoctorService {
         limit,
         slots: slots.map((s) => ({
           timeslot_id: s.timeslot_id,
-          date: s.date,
-          session: s.session,
+          date: s.availability.date,
+          session: s.availability.session,
           start_time: s.start_time.slice(0, 5),
           end_time: s.end_time.slice(0, 5),
           max_patients: s.max_patients,
@@ -767,10 +795,11 @@ export class DoctorService {
       dto.booking_end_time,
     );
 
-    if (bookingStartAt < now || bookingEndAt < now) {
-      throw new BadRequestException(
-        'Booking start and end time cannot be in the past',
-      );
+    if (bookingStartAt < now) {
+      throw new BadRequestException('Booking cannot start in the past');
+    }
+    if (bookingEndAt < now) {
+      throw new BadRequestException('Booking cannot end in the past');
     }
 
     if (bookingStartAt >= bookingEndAt) {

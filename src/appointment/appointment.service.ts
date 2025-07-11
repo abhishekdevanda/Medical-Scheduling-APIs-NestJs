@@ -478,6 +478,7 @@ export class AppointmentService {
       data,
     };
   }
+
   private combineDateAndTime(date: Date, timeStr: string): Date {
     const [hours, minutes] = timeStr.split(':').map(Number);
     const result = new Date(date);
