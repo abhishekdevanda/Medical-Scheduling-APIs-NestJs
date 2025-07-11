@@ -6,14 +6,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Patient } from 'src/patient/entities/patient.entity';
 import { Appointment } from './entities/appointment.entity';
 import { DoctorTimeSlot } from 'src/doctor/entities/doctor-time-slot.entity';
 import { TimeSlotStatus } from 'src/doctor/enums/availability.enums';
 import { AppointmentStatus } from './enums/appointment-status.enum';
-import { CreateAppointmentDto } from './dto/appointment.dto';
+import { NewAppointmentDto } from './dto/new-appointment.dto';
 import { UserRole } from 'src/auth/enums/user.enums';
+import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
+import { RescheduleType } from './enums/reschedule-type.enum';
 
 @Injectable()
 export class AppointmentService {
@@ -26,7 +28,7 @@ export class AppointmentService {
     private patientRepo: Repository<Patient>,
   ) {}
 
-  async createAppointment(patientId: number, dto: CreateAppointmentDto) {
+  async newAppointment(patientId: number, dto: NewAppointmentDto) {
     try {
       const { doctor_id, timeslot_id } = dto;
 
@@ -36,6 +38,10 @@ export class AppointmentService {
       });
       if (!timeslot) {
         throw new NotFoundException('Time slot not found');
+      }
+
+      if (timeslot.status !== TimeSlotStatus.AVAILABLE) {
+        throw new ConflictException('Time slot is no longer available');
       }
 
       const availability = timeslot.availability;
@@ -61,11 +67,7 @@ export class AppointmentService {
         throw new NotFoundException('Patient not found');
       }
 
-      if (timeslot.status !== TimeSlotStatus.AVAILABLE) {
-        throw new ConflictException('Time slot is no longer available');
-      }
-
-      const { doctor, ...timeSlotWithoutDoctor } = timeslot;
+      const { doctor } = timeslot;
 
       const existingAppointmentInSession = await this.appointmentRepo.findOne({
         where: {
@@ -73,8 +75,10 @@ export class AppointmentService {
           appointment_status: AppointmentStatus.SCHEDULED,
           time_slot: {
             doctor: { user_id: doctor.user_id },
-            date: timeslot.date,
-            session: timeslot.session,
+            availability: {
+              date: availability.date,
+              session: availability.session,
+            },
           },
         },
       });
@@ -106,7 +110,10 @@ export class AppointmentService {
         patient,
         time_slot: timeslot,
         appointment_status: AppointmentStatus.SCHEDULED,
-        scheduled_on: new Date(),
+        scheduled_on: this.combineDateAndTime(
+          availability.date,
+          reporting_time,
+        ),
         reason: dto.reason,
         notes: dto.notes,
       });
@@ -121,8 +128,11 @@ export class AppointmentService {
       return {
         message: 'Appointment booked successfully',
         data: {
-          reporting_time,
           ...appointment,
+          scheduled_on:
+            appointment.scheduled_on.toDateString() +
+            ' ' +
+            appointment.scheduled_on.toTimeString().slice(0, 5),
           doctor: {
             ...doctor,
             user: { profile: doctor.user.profile },
@@ -131,7 +141,19 @@ export class AppointmentService {
             ...patient,
             user: { profile: patient.user.profile },
           },
-          time_slot: timeSlotWithoutDoctor,
+          time_slot: {
+            timeslot_id: timeslot.timeslot_id,
+            start_time: timeslot.start_time,
+            end_time: timeslot.end_time,
+            availability: {
+              availability_id: timeslot.availability.availability_id,
+              date: timeslot.availability.date,
+              session: timeslot.availability.session,
+              consulting_start_time:
+                timeslot.availability.consulting_start_time,
+              consulting_end_time: timeslot.availability.consulting_end_time,
+            },
+          },
         },
       };
     } catch (error) {
@@ -295,7 +317,7 @@ export class AppointmentService {
     try {
       const appointment = await this.appointmentRepo.findOne({
         where: { appointment_id: appointmentId },
-        relations: ['doctor', 'patient', 'time_slot'],
+        relations: ['doctor', 'patient', 'time_slot', 'time_slot.availability'],
       });
       if (!appointment) {
         throw new NotFoundException('Appointment not found');
@@ -321,7 +343,7 @@ export class AppointmentService {
 
       const now = new Date();
       const consultStartAt = this.combineDateAndTime(
-        appointment.time_slot.date,
+        appointment.time_slot.availability.date,
         appointment.time_slot.start_time,
       );
 
@@ -345,6 +367,90 @@ export class AppointmentService {
         throw error;
       }
       throw new InternalServerErrorException('Error cancelling appointment');
+    }
+  }
+
+  async rescheduleAppointments(
+    doctorId: number,
+    dto: RescheduleAppointmentDto,
+  ) {
+    try {
+      // find appointments to reschedule
+      let appointments: Appointment[];
+
+      if (dto.appointment_ids && dto.appointment_ids.length > 0) {
+        // find appointments that match the provided appointment_ids
+        const appointmentsToReschedule = await this.appointmentRepo.find({
+          where: {
+            appointment_id: In(dto.appointment_ids),
+            doctor: { user_id: doctorId },
+            appointment_status: AppointmentStatus.SCHEDULED,
+          },
+          relations: [
+            'doctor',
+            'patient',
+            'time_slot',
+            'time_slot.availability',
+          ],
+        });
+        if (
+          !appointmentsToReschedule ||
+          appointmentsToReschedule.length === 0
+        ) {
+          throw new NotFoundException('No appointments found');
+        }
+        appointments = appointmentsToReschedule;
+      } else {
+        // find all appointments that are scheduled for today
+        const appointmentsToReschedule = await this.appointmentRepo.find({
+          where: {
+            doctor: { user_id: doctorId },
+            appointment_status: AppointmentStatus.SCHEDULED,
+            time_slot: {
+              availability: {
+                date: new Date(new Date().toISOString().split('T')[0]), // today's date
+              },
+            },
+          },
+          relations: [
+            'doctor',
+            'patient',
+            'time_slot',
+            'time_slot.availability',
+          ],
+        });
+        if (
+          !appointmentsToReschedule ||
+          appointmentsToReschedule.length === 0
+        ) {
+          throw new NotFoundException('No appointments found');
+        }
+        appointments = appointmentsToReschedule;
+      }
+
+      appointments.forEach((appointment) => {
+        const shift =
+          dto.reschedule_type === RescheduleType.POSTPONE
+            ? dto.shift_minutes
+            : -dto.shift_minutes;
+        // Apply the time shift to the scheduled_on time
+        appointment.scheduled_on = new Date(
+          appointment.scheduled_on.getTime() + shift * 60 * 1000,
+        );
+      });
+      // Save the updated appointments
+      await this.appointmentRepo.save(appointments);
+      return {
+        message: 'Appointments rescheduled successfully',
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error rescheduling appointment');
     }
   }
 
@@ -382,7 +488,10 @@ export class AppointmentService {
       return {
         appointment_id: appointment.appointment_id,
         appointment_status: appointment.appointment_status,
-        scheduled_on: appointment.scheduled_on,
+        scheduled_on:
+          appointment.scheduled_on.toDateString() +
+          ' ' +
+          appointment.scheduled_on.toTimeString().slice(0, 5),
         reason: appointment.reason,
         notes: appointment.notes,
         ...(role === UserRole.PATIENT
@@ -411,6 +520,7 @@ export class AppointmentService {
       data,
     };
   }
+
   private combineDateAndTime(date: Date, timeStr: string): Date {
     const [hours, minutes] = timeStr.split(':').map(Number);
     const result = new Date(date);

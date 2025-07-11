@@ -13,12 +13,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AppointmentService } from './appointment.service';
-import { CreateAppointmentDto } from './dto/appointment.dto';
+import { NewAppointmentDto } from './dto/new-appointment.dto';
 import { Request } from 'express';
 import { JwtPayload } from 'src/auth/auth.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt.guard';
 import { UserRole } from 'src/auth/enums/user.enums';
 import { AppointmentStatus } from './enums/appointment-status.enum';
+import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 
 @Controller('api/v1/appointments')
 @UseGuards(JwtAuthGuard)
@@ -41,19 +42,13 @@ export class AppointmentController {
 
   @Post('new')
   @HttpCode(HttpStatus.CREATED)
-  async createAppointment(
-    @Body() createAppointmentDto: CreateAppointmentDto,
-    @Req() req: Request,
-  ) {
+  async newAppointment(@Req() req: Request, @Body() dto: NewAppointmentDto) {
     const user = req.user as JwtPayload;
     if (user.role !== UserRole.PATIENT) {
       throw new UnauthorizedException('Only patients can create appointments');
     }
     const patientId = user.sub;
-    return this.appointmentService.createAppointment(
-      patientId,
-      createAppointmentDto,
-    );
+    return this.appointmentService.newAppointment(patientId, dto);
   }
 
   @Patch(':appointmentId/cancel')
@@ -68,5 +63,20 @@ export class AppointmentController {
       user.sub,
       user.role,
     );
+  }
+
+  @Patch('reschedule')
+  @HttpCode(HttpStatus.OK)
+  async rescheduleAppointment(
+    @Req() req: Request,
+    @Body() dto: RescheduleAppointmentDto,
+  ) {
+    const user = req.user as JwtPayload;
+    if (user.role !== UserRole.DOCTOR) {
+      throw new UnauthorizedException(
+        'Only doctors can reschedule appointments',
+      );
+    }
+    return this.appointmentService.rescheduleAppointments(user.sub, dto);
   }
 }
