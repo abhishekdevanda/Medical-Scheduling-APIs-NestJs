@@ -70,6 +70,7 @@ export class AppointmentService {
       const existingAppointmentInSession = await this.appointmentRepo.findOne({
         where: {
           patient: { user_id: patientId },
+          appointment_status: AppointmentStatus.SCHEDULED,
           time_slot: {
             doctor: { user_id: doctor.user_id },
             date: timeslot.date,
@@ -85,7 +86,10 @@ export class AppointmentService {
       }
 
       const existingAppointmentsCount = await this.appointmentRepo.count({
-        where: { time_slot: { timeslot_id: timeslot.timeslot_id } },
+        where: {
+          appointment_status: AppointmentStatus.SCHEDULED,
+          time_slot: { timeslot_id: timeslot.timeslot_id },
+        },
       });
 
       if (existingAppointmentsCount >= timeslot.max_patients) {
@@ -103,6 +107,8 @@ export class AppointmentService {
         time_slot: timeslot,
         appointment_status: AppointmentStatus.SCHEDULED,
         scheduled_on: new Date(),
+        reason: dto.reason,
+        notes: dto.notes,
       });
 
       await this.appointmentRepo.save(appointment);
@@ -141,48 +147,204 @@ export class AppointmentService {
     }
   }
 
-  async viewAppointments(userId: number, role: UserRole) {
+  async viewAppointments(
+    userId: number,
+    role: UserRole,
+    status?: AppointmentStatus,
+  ) {
     try {
+      // Appointments for patient
       if (role === UserRole.PATIENT) {
-        const appointments = await this.appointmentRepo.find({
-          where: {
-            patient: { user_id: userId },
-            appointment_status: AppointmentStatus.SCHEDULED,
-          },
-          relations: ['doctor', 'doctor.user', 'time_slot'],
-          order: { scheduled_on: 'ASC' },
-        });
+        if (status && status === AppointmentStatus.SCHEDULED) {
+          const appointments = await this.appointmentRepo.find({
+            where: {
+              patient: { user_id: userId },
+              appointment_status: AppointmentStatus.SCHEDULED,
+            },
+            relations: ['doctor', 'doctor.user', 'time_slot'],
+            order: { scheduled_on: 'ASC' },
+          });
 
-        return this.buildAppointmentResponse(
-          'Upcoming appointments for patient',
+          return this.buildViewAppointmentResponse(
+            'your upcoming appointments',
+            appointments,
+            role,
+          );
+        }
+        if (status && status === AppointmentStatus.COMPLETED) {
+          const appointments = await this.appointmentRepo.find({
+            where: {
+              patient: { user_id: userId },
+              appointment_status: AppointmentStatus.COMPLETED,
+            },
+            relations: ['doctor', 'doctor.user', 'time_slot'],
+            order: { scheduled_on: 'DESC' },
+          });
+
+          return this.buildViewAppointmentResponse(
+            'your completed appointments',
+            appointments,
+            role,
+          );
+        }
+        if (status && status === AppointmentStatus.CANCELLED) {
+          const appointments = await this.appointmentRepo.find({
+            where: {
+              patient: { user_id: userId },
+              appointment_status: AppointmentStatus.CANCELLED,
+            },
+            relations: ['doctor', 'doctor.user', 'time_slot'],
+            order: { scheduled_on: 'DESC' },
+          });
+
+          return this.buildViewAppointmentResponse(
+            'your cancelled appointments',
+            appointments,
+            role,
+          );
+        }
+        const appointments = await this.appointmentRepo.find({
+          where: { patient: { user_id: userId } },
+          relations: ['doctor', 'doctor.user', 'time_slot'],
+          order: { scheduled_on: 'DESC' },
+        });
+        return this.buildViewAppointmentResponse(
+          'your all appointments',
           appointments,
           role,
         );
       }
-      if (role === UserRole.DOCTOR) {
-        const appointments = await this.appointmentRepo.find({
-          where: {
-            doctor: { user_id: userId },
-            appointment_status: AppointmentStatus.SCHEDULED,
-          },
-          relations: ['patient', 'patient.user', 'time_slot'],
-          order: { scheduled_on: 'ASC' },
-        });
+      // Appointments for doctor
+      else if (role === UserRole.DOCTOR) {
+        if (status && status === AppointmentStatus.SCHEDULED) {
+          const appointments = await this.appointmentRepo.find({
+            where: {
+              doctor: { user_id: userId },
+              appointment_status: AppointmentStatus.SCHEDULED,
+            },
+            relations: ['patient', 'patient.user', 'time_slot'],
+            order: { scheduled_on: 'ASC' },
+          });
 
-        return this.buildAppointmentResponse(
-          'Upcoming appointments for doctor',
+          return this.buildViewAppointmentResponse(
+            'your upcoming appointments',
+            appointments,
+            role,
+          );
+        }
+        if (status && status === AppointmentStatus.COMPLETED) {
+          const appointments = await this.appointmentRepo.find({
+            where: {
+              doctor: { user_id: userId },
+              appointment_status: AppointmentStatus.COMPLETED,
+            },
+            relations: ['patient', 'patient.user', 'time_slot'],
+            order: { scheduled_on: 'DESC' },
+          });
+
+          return this.buildViewAppointmentResponse(
+            'your completed appointments',
+            appointments,
+            role,
+          );
+        }
+        if (status && status === AppointmentStatus.CANCELLED) {
+          const appointments = await this.appointmentRepo.find({
+            where: {
+              doctor: { user_id: userId },
+              appointment_status: AppointmentStatus.CANCELLED,
+            },
+            relations: ['patient', 'patient.user', 'time_slot'],
+            order: { scheduled_on: 'DESC' },
+          });
+
+          return this.buildViewAppointmentResponse(
+            'your cancelled appointments',
+            appointments,
+            role,
+          );
+        }
+        const appointments = await this.appointmentRepo.find({
+          where: { doctor: { user_id: userId } },
+          relations: ['patient', 'patient.user', 'time_slot'],
+          order: { scheduled_on: 'DESC' },
+        });
+        return this.buildViewAppointmentResponse(
+          'your all appointments',
           appointments,
           role,
         );
+      } else {
+        throw new BadRequestException('Invalid user role');
       }
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      console.error('Error fetching appointments:', error);
       throw new InternalServerErrorException(
         'Error fetching upcoming appointments',
       );
+    }
+  }
+
+  async cancelAppointment(
+    appointmentId: number,
+    userId: number,
+    role: UserRole,
+  ) {
+    try {
+      const appointment = await this.appointmentRepo.findOne({
+        where: { appointment_id: appointmentId },
+        relations: ['doctor', 'patient', 'time_slot'],
+      });
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
+      }
+      if (role === UserRole.PATIENT && appointment.patient.user_id !== userId) {
+        throw new ConflictException(
+          'You can only cancel your own appointments',
+        );
+      }
+      if (role === UserRole.DOCTOR && appointment.doctor.user_id !== userId) {
+        throw new ConflictException(
+          'You can only cancel your own appointments',
+        );
+      }
+      if (
+        appointment.appointment_status === AppointmentStatus.CANCELLED ||
+        appointment.appointment_status === AppointmentStatus.COMPLETED
+      ) {
+        throw new ConflictException(
+          'Appointment already cancelled or completed',
+        );
+      }
+
+      const now = new Date();
+      const consultStartAt = this.combineDateAndTime(
+        appointment.time_slot.date,
+        appointment.time_slot.start_time,
+      );
+
+      if (now >= consultStartAt) {
+        throw new ConflictException(
+          'You can only cancel appointments before the consultation starts',
+        );
+      }
+
+      appointment.appointment_status = AppointmentStatus.CANCELLED;
+      await this.appointmentRepo.save(appointment);
+
+      return {
+        message: 'Appointment cancelled successfully',
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error cancelling appointment');
     }
   }
 
@@ -211,7 +373,7 @@ export class AppointmentService {
     return toStr(reportingTimeMins);
   }
 
-  private buildAppointmentResponse(
+  private buildViewAppointmentResponse(
     message: string,
     appointments: Appointment[],
     role: UserRole,
@@ -248,5 +410,11 @@ export class AppointmentService {
       total: data.length,
       data,
     };
+  }
+  private combineDateAndTime(date: Date, timeStr: string): Date {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const result = new Date(date);
+    result.setHours(hours, minutes, 0, 0);
+    return result;
   }
 }
