@@ -5,7 +5,6 @@ import {
   ManyToOne,
   OneToMany,
   JoinColumn,
-  Unique,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -14,13 +13,6 @@ import { Session, Weekday } from '../enums/availability.enums';
 import { DoctorTimeSlot } from './doctor-time-slot.entity';
 
 @Entity('doctor_availabilities')
-@Unique([
-  'doctor',
-  'date',
-  'session',
-  'consulting_start_time',
-  'consulting_end_time',
-])
 export class DoctorAvailability {
   @PrimaryGeneratedColumn()
   availability_id: number;
@@ -51,6 +43,9 @@ export class DoctorAvailability {
 
   @UpdateDateColumn()
   updated_at: Date;
+
+  @Column({ type: 'boolean', default: false })
+  is_deleted: boolean;
 
   // Relationships
   @ManyToOne(() => Doctor, (doctor) => doctor.availabilities, {

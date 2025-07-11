@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateAppointmentDto {
   @IsInt()
@@ -7,4 +7,12 @@ export class CreateAppointmentDto {
   @IsInt()
   @IsNotEmpty()
   timeslot_id: number;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
