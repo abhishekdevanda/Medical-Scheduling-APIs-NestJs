@@ -10,20 +10,23 @@ import {
   Body,
   Patch,
   UnauthorizedException,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt.guard';
 import { Request } from 'express';
 import { DoctorService } from './doctor.service';
-import { CreateDoctorAvailabilityDto } from './dto/create-availabilty.dto';
+import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
 import { JwtPayload } from 'src/auth/auth.service';
 import { UserRole } from 'src/auth/enums/user.enums';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
+import { CreateTimeslotDto } from './dto/create-timeslot.dto';
 
 @Controller('api/v1/doctors')
 @UseGuards(JwtAuthGuard)
 export class DoctorController {
   constructor(private readonly doctorService: DoctorService) {}
 
+  // GET Requests
   @Get('profile')
   async getProfile(@Req() req: Request) {
     const user = req.user as JwtPayload;
@@ -39,8 +42,8 @@ export class DoctorController {
   }
 
   @Get(':id')
-  async getDoctorDetails(@Param('id') id: string) {
-    return this.doctorService.getDoctorDetails(Number(id));
+  async getDoctorDetails(@Param('id', ParseIntPipe) id: number) {
+    return this.doctorService.getDoctorDetails(id);
   }
 
   @Get(':id/availability')
@@ -52,8 +55,9 @@ export class DoctorController {
     return this.doctorService.getAvailableTimeSlots(id, page, limit);
   }
 
+  // Post Requests
   @Post('availability')
-  async setAvailability(
+  async createAvailability(
     @Body() dto: CreateDoctorAvailabilityDto,
     @Req() req: Request,
   ) {
@@ -64,6 +68,16 @@ export class DoctorController {
     return this.doctorService.createAvailability(user.sub, dto);
   }
 
+  @Post('timeslot')
+  async createTimeslots(@Body() dto: CreateTimeslotDto, @Req() req: Request) {
+    const user = req.user as JwtPayload;
+    if (user.role !== UserRole.DOCTOR) {
+      throw new ForbiddenException('Access denied: Not a doctor');
+    }
+    return this.doctorService.createTimeslots(user.sub, dto);
+  }
+
+  // Patch Requests
   @Patch('schedule_type')
   async updateScheduleType(
     @Body() dto: UpdateScheduleDto,

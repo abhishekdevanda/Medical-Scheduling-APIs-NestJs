@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -7,10 +8,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike, FindOptionsWhere } from 'typeorm';
 import { Doctor } from 'src/doctor/entities/doctor.entity';
-import { CreateDoctorAvailabilityDto } from './dto/create-availabilty.dto';
+import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
+import { CreateTimeslotDto } from './dto/create-timeslot.dto';
 import { DoctorAvailability } from './entities/doctor-availability.entity';
 import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
-import { TimeSlotStatus } from './enums/availability.enums';
+import { TimeSlotStatus, Weekday } from './enums/availability.enums';
 import { ScheduleType } from './enums/schedule-type.enums';
 
 @Injectable()
@@ -97,80 +99,183 @@ export class DoctorService {
 
   async createAvailability(doctorId: number, dto: CreateDoctorAvailabilityDto) {
     try {
+      const { bookingStartAt, bookingEndAt } =
+        this.validateAvailabilityDates(dto);
+      let { datesToCreate } = this.validateAvailabilityDates(dto);
+
       const doctor = await this.doctorRepo.findOne({
         where: { user_id: doctorId },
         relations: ['user'],
       });
       if (!doctor) throw new NotFoundException('Doctor not found');
 
-      if (
-        doctor.schedule_type === ScheduleType.WAVE &&
-        (!dto.patients_per_slot || dto.patients_per_slot < 1)
-      ) {
-        throw new BadRequestException(
-          'patients_per_slot must be provided for WAVE scheduling.',
+      const existingDates: string[] = [];
+      for (const date of datesToCreate) {
+        const existing = await this.availabilityRepo.findOne({
+          where: {
+            doctor: { user_id: doctorId },
+            date: date,
+            session: dto.session,
+          },
+        });
+
+        if (existing) {
+          existingDates.push(date.toDateString());
+        }
+      }
+
+      // If all dates already have availabilities, throw conflict error
+      if (existingDates.length === datesToCreate.length) {
+        throw new ConflictException(
+          `Availability already exists for the requested ${datesToCreate.length > 1 ? 'dates' : 'date'}: ${existingDates.join(', ')} (session: ${dto.session})`,
         );
       }
 
-      if (new Date(dto.date) < new Date(new Date().toDateString())) {
-        throw new BadRequestException('Date is in the past');
+      // If some dates have availabilities, filter them out
+      if (existingDates.length > 0) {
+        datesToCreate = datesToCreate.filter(
+          (date) => !existingDates.includes(date.toDateString()),
+        );
       }
 
-      const existing = await this.availabilityRepo.findOne({
-        where: {
-          doctor: { user_id: doctorId },
-          date: dto.date,
-          session: dto.session,
-          consulting_start_time: dto.consulting_start_time,
-          consulting_end_time: dto.consulting_end_time,
-        },
-      });
-      if (existing) throw new BadRequestException('Duplicate availability');
-
-      const availability = this.availabilityRepo.create({ ...dto, doctor });
-      await this.availabilityRepo.save(availability);
-
-      const slotTimes = this.generateSlots(
-        dto.consulting_start_time,
-        dto.consulting_end_time,
-        dto.slot_duration,
-      );
-      const slots = slotTimes.map(({ start, end }) => {
-        const timeSlot = this.timeSlotRepo.create({
-          date: dto.date,
-          session: dto.session,
-          start_time: start,
-          end_time: end,
-          status: TimeSlotStatus.AVAILABLE,
+      const createdAvailabilities: DoctorAvailability[] = [];
+      for (const date of datesToCreate) {
+        const availability = this.availabilityRepo.create({
+          ...dto,
+          date: date,
           doctor,
-          availability,
+          // Store weekdays only if we're using recurring pattern
+          weekdays: dto.date ? undefined : dto.weekdays,
+          booking_start_at: bookingStartAt,
+          booking_end_at: bookingEndAt,
         });
 
-        if (doctor.schedule_type === ScheduleType.WAVE) {
-          timeSlot.max_patients = dto.patients_per_slot || 3; // Default for WAVE schedule
-        } else {
-          timeSlot.max_patients = 1; // Default for STREAM schedule
-        }
-        return timeSlot;
-      });
-
-      await this.timeSlotRepo.save(slots);
-
+        await this.availabilityRepo.save(availability);
+        createdAvailabilities.push(availability);
+      }
       return {
-        message: 'Availability and slots created',
-        data: {
-          ...availability,
-          doctor: { ...doctor, user: doctor.user.profile },
-        },
+        message: 'Availability created',
+        data: createdAvailabilities.map((a) => ({
+          availability_id: a.availability_id,
+          date: a.date.toDateString(),
+          session: a.session,
+          consulting_start_time: a.consulting_start_time,
+          consulting_end_time: a.consulting_end_time,
+          booking_start_at:
+            a.booking_start_at.toDateString() +
+            ' ' +
+            a.booking_start_at.toTimeString().slice(0, 5),
+          booking_end_at:
+            a.booking_end_at.toDateString() +
+            ' ' +
+            a.booking_end_at.toTimeString().slice(0, 5),
+          weekdays: a.weekdays,
+        })),
       };
     } catch (error) {
       if (
         error instanceof NotFoundException ||
-        error instanceof BadRequestException
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
       ) {
         throw error;
       }
       throw new InternalServerErrorException('Error creating availability');
+    }
+  }
+
+  async createTimeslots(doctorId: number, dto: CreateTimeslotDto) {
+    try {
+      const doctor = await this.doctorRepo.findOne({
+        where: {
+          user_id: doctorId,
+        },
+      });
+      if (!doctor) throw new NotFoundException('Doctor not found');
+
+      if (doctor.schedule_type === ScheduleType.WAVE && !dto.max_patients) {
+        throw new BadRequestException(
+          'max_patients is required for wave scheduling',
+        );
+      }
+
+      const availability = await this.availabilityRepo.findOne({
+        where: { availability_id: dto.availability_id },
+      });
+
+      if (!availability) throw new NotFoundException('Availability not found');
+
+      if (
+        dto.start_time > dto.end_time ||
+        dto.start_time > availability.consulting_end_time ||
+        dto.end_time > availability.consulting_end_time ||
+        dto.start_time < availability.consulting_start_time
+      )
+        throw new BadRequestException('Invalid start or end time');
+
+      const overlappingTimeslots = await this.timeSlotRepo.find({
+        where: {
+          doctor: { user_id: doctorId },
+          availability: { availability_id: dto.availability_id },
+        },
+      });
+
+      // Check if any existing time slot overlaps with the new one
+      const padTime = (t: string) => (t.length === 5 ? t + ':00' : t);
+      const hasOverlap = overlappingTimeslots.some((slot) => {
+        const dtoStart = padTime(dto.start_time);
+        const dtoEnd = padTime(dto.end_time);
+        return dtoStart < slot.end_time && dtoEnd > slot.start_time;
+      });
+
+      if (hasOverlap) {
+        // Find the conflicting slot for better error message
+        const conflictingSlot = overlappingTimeslots.find((slot) => {
+          const dtoStart = padTime(dto.start_time);
+          const dtoEnd = padTime(dto.end_time);
+          return dtoStart < slot.end_time && dtoEnd > slot.start_time;
+        });
+
+        throw new ConflictException(
+          `Time slot (${dto.start_time}-${dto.end_time}) overlaps with existing time slot (${conflictingSlot?.start_time}-${conflictingSlot?.end_time})`,
+        );
+      }
+      const newTimeslot = this.timeSlotRepo.create({
+        doctor,
+        availability,
+        date: availability.date,
+        session: availability.session,
+        start_time: dto.start_time,
+        end_time: dto.end_time,
+        max_patients:
+          doctor.schedule_type === ScheduleType.WAVE ? dto.max_patients : 1,
+        status: TimeSlotStatus.AVAILABLE,
+      });
+
+      const savedTimeslot = await this.timeSlotRepo.save(newTimeslot);
+
+      return {
+        message: 'Time slot created successfully',
+        data: {
+          timeslot_id: savedTimeslot.timeslot_id,
+          date: savedTimeslot.date,
+          session: savedTimeslot.session,
+          start_time: savedTimeslot.start_time,
+          end_time: savedTimeslot.end_time,
+          max_patients: savedTimeslot.max_patients,
+          status: savedTimeslot.status,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      console.log(error);
+      throw new InternalServerErrorException('Error creating time slots');
     }
   }
 
@@ -249,40 +354,109 @@ export class DoctorService {
     }
   }
 
-  private generateSlots(
-    startTime: string,
-    endTime: string,
-    interval: number,
-  ): { start: string; end: string }[] {
-    const toMin = (t: string) => {
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
+  private generateDatesForWeekdays(
+    weekdays: Weekday[],
+    weeksAhead: number,
+  ): Date[] {
+    const dates: Date[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const weekdayMap = {
+      [Weekday.Sunday]: 0,
+      [Weekday.Monday]: 1,
+      [Weekday.Tuesday]: 2,
+      [Weekday.Wednesday]: 3,
+      [Weekday.Thursday]: 4,
+      [Weekday.Friday]: 5,
+      [Weekday.Saturday]: 6,
     };
 
-    const toStr = (m: number) => {
-      const h = Math.floor(m / 60);
-      const min = m % 60;
-      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    // Generate dates for the specified number of weeks ahead
+    for (let week = 0; week < weeksAhead; week++) {
+      for (const weekday of weekdays) {
+        const targetDay = weekdayMap[weekday];
+        const date = new Date(today);
+
+        // Calculate days to add to reach the target weekday
+        const daysToAdd = ((targetDay + 7 - date.getDay()) % 7) + week * 7;
+        date.setDate(date.getDate() + daysToAdd);
+
+        // Only add future dates
+        if (date > today) {
+          dates.push(date);
+        }
+      }
+    }
+
+    return dates.sort((a, b) => a.getTime() - b.getTime());
+  }
+
+  private combineDateAndTime(date: Date, timeStr: string): Date {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const result = new Date(date);
+    result.setHours(hours, minutes, 0, 0);
+    return result;
+  }
+
+  private validateAvailabilityDates(dto: CreateDoctorAvailabilityDto) {
+    const now = new Date();
+
+    if (!dto.date && (!dto.weekdays || dto.weekdays.length === 0)) {
+      throw new BadRequestException('Either date or weekdays must be provided');
+    }
+
+    if (dto.date && dto.date < now) {
+      throw new BadRequestException('Consulting date must be in the future');
+    }
+    const bookingStartAt = this.combineDateAndTime(
+      dto.booking_start_date,
+      dto.booking_start_time,
+    );
+
+    const bookingEndAt = this.combineDateAndTime(
+      dto.booking_end_date,
+      dto.booking_end_time,
+    );
+
+    if (bookingStartAt < now || bookingEndAt < now) {
+      throw new BadRequestException(
+        'Booking start and end time cannot be in the past',
+      );
+    }
+
+    if (bookingStartAt >= bookingEndAt) {
+      throw new BadRequestException(
+        'Booking start time must be before booking end time',
+      );
+    }
+
+    let datesToCreate: Date[] = [];
+    if (dto.date) {
+      datesToCreate = [dto.date];
+    } else if (dto.weekdays && dto.weekdays.length > 0) {
+      datesToCreate = this.generateDatesForWeekdays(dto.weekdays, 4); // Generate dates for next 4 weeks
+    }
+
+    for (const date of datesToCreate) {
+      const consulting_start_at = this.combineDateAndTime(
+        date,
+        dto.consulting_start_time,
+      );
+      if (
+        bookingStartAt > consulting_start_at ||
+        bookingEndAt > consulting_start_at
+      ) {
+        throw new BadRequestException(
+          `Booking time must be before the consulting start time: ${consulting_start_at.toDateString() + ' ' + consulting_start_at.toTimeString().slice(0, 5)}`,
+        );
+      }
+    }
+
+    return {
+      bookingStartAt,
+      bookingEndAt,
+      datesToCreate,
     };
-
-    const startMins = toMin(startTime);
-    const endMins = toMin(endTime);
-
-    if (endMins <= startMins) {
-      throw new BadRequestException('End time must be after start time');
-    }
-
-    const slots: { start: string; end: string }[] = [];
-    let current = startMins;
-
-    while (current + interval <= endMins) {
-      slots.push({
-        start: toStr(current),
-        end: toStr(current + interval),
-      });
-      current += interval;
-    }
-
-    return slots;
   }
 }

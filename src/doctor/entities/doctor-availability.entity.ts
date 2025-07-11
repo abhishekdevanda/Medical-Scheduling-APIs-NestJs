@@ -38,7 +38,13 @@ export class DoctorAvailability {
   session: Session;
 
   @Column({ type: 'enum', enum: Weekday, array: true, nullable: true })
-  weekdays: Weekday[];
+  weekdays?: Weekday[];
+
+  @Column({ type: 'timestamp' })
+  booking_start_at: Date;
+
+  @Column({ type: 'timestamp' })
+  booking_end_at: Date;
 
   @CreateDateColumn()
   created_at: Date;

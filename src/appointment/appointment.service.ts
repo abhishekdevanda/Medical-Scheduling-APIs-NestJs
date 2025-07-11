@@ -30,15 +30,24 @@ export class AppointmentService {
     try {
       const { doctor_id, timeslot_id } = dto;
 
-      const timeSlot = await this.timeSlotRepo.findOne({
+      const timeslot = await this.timeSlotRepo.findOne({
         where: { timeslot_id },
-        relations: ['doctor', 'doctor.user'],
+        relations: ['doctor', 'doctor.user', 'availability'],
       });
-      if (!timeSlot) {
+      if (!timeslot) {
         throw new NotFoundException('Time slot not found');
       }
 
-      if (timeSlot.doctor.user_id !== doctor_id) {
+      const availability = timeslot.availability;
+
+      const now = new Date();
+      if (now < availability.booking_start_at) {
+        throw new ConflictException('Booking window not opened yet');
+      }
+      if (now > availability.booking_end_at) {
+        throw new ConflictException('Booking window closed');
+      }
+      if (timeslot.doctor.user_id !== doctor_id) {
         throw new BadRequestException(
           'Time slot does not belong to this doctor',
         );
@@ -52,19 +61,19 @@ export class AppointmentService {
         throw new NotFoundException('Patient not found');
       }
 
-      if (timeSlot.status !== TimeSlotStatus.AVAILABLE) {
+      if (timeslot.status !== TimeSlotStatus.AVAILABLE) {
         throw new ConflictException('Time slot is no longer available');
       }
 
-      const { doctor, ...timeSlotWithoutDoctor } = timeSlot;
+      const { doctor, ...timeSlotWithoutDoctor } = timeslot;
 
       const existingAppointmentInSession = await this.appointmentRepo.findOne({
         where: {
           patient: { user_id: patientId },
           time_slot: {
             doctor: { user_id: doctor.user_id },
-            date: timeSlot.date,
-            session: timeSlot.session,
+            date: timeslot.date,
+            session: timeslot.session,
           },
         },
       });
@@ -76,31 +85,31 @@ export class AppointmentService {
       }
 
       const existingAppointmentsCount = await this.appointmentRepo.count({
-        where: { time_slot: { timeslot_id: timeSlot.timeslot_id } },
+        where: { time_slot: { timeslot_id: timeslot.timeslot_id } },
       });
 
-      if (existingAppointmentsCount >= timeSlot.max_patients) {
+      if (existingAppointmentsCount >= timeslot.max_patients) {
         throw new ConflictException('This time slot is already full.');
       }
 
       const reporting_time = this.calculateReportingTime(
-        timeSlot,
+        timeslot,
         existingAppointmentsCount,
       );
 
       const appointment = this.appointmentRepo.create({
         doctor,
         patient,
-        time_slot: timeSlot,
+        time_slot: timeslot,
         appointment_status: AppointmentStatus.SCHEDULED,
         scheduled_on: new Date(),
       });
 
       await this.appointmentRepo.save(appointment);
 
-      if (existingAppointmentsCount + 1 >= timeSlot.max_patients) {
-        timeSlot.status = TimeSlotStatus.BOOKED;
-        await this.timeSlotRepo.save(timeSlot);
+      if (existingAppointmentsCount + 1 >= timeslot.max_patients) {
+        timeslot.status = TimeSlotStatus.BOOKED;
+        await this.timeSlotRepo.save(timeslot);
       }
 
       return {
@@ -178,7 +187,7 @@ export class AppointmentService {
   }
 
   private calculateReportingTime(
-    timeSlot: DoctorTimeSlot,
+    timeslot: DoctorTimeSlot,
     patientIndex: number,
   ): string {
     const toMin = (t: string) => {
@@ -191,11 +200,11 @@ export class AppointmentService {
       return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
     };
 
-    const startMins = toMin(timeSlot.start_time);
-    const endMins = toMin(timeSlot.end_time);
+    const startMins = toMin(timeslot.start_time);
+    const endMins = toMin(timeslot.end_time);
     const totalDuration = endMins - startMins;
 
-    const timePerPatient = totalDuration / timeSlot.max_patients;
+    const timePerPatient = totalDuration / timeslot.max_patients;
 
     const reportingTimeMins = startMins + timePerPatient * patientIndex;
 
