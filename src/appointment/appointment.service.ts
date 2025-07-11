@@ -12,8 +12,9 @@ import { Appointment } from './entities/appointment.entity';
 import { DoctorTimeSlot } from 'src/doctor/entities/doctor-time-slot.entity';
 import { TimeSlotStatus } from 'src/doctor/enums/availability.enums';
 import { AppointmentStatus } from './enums/appointment-status.enum';
-import { CreateAppointmentDto } from './dto/appointment.dto';
+import { CreateAppointmentDto } from './dto/new-appointment.dto';
 import { UserRole } from 'src/auth/enums/user.enums';
+import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 
 @Injectable()
 export class AppointmentService {
@@ -26,7 +27,7 @@ export class AppointmentService {
     private patientRepo: Repository<Patient>,
   ) {}
 
-  async createAppointment(patientId: number, dto: CreateAppointmentDto) {
+  async newAppointment(patientId: number, dto: CreateAppointmentDto) {
     try {
       const { doctor_id, timeslot_id } = dto;
 
@@ -347,6 +348,11 @@ export class AppointmentService {
       throw new InternalServerErrorException('Error cancelling appointment');
     }
   }
+
+  async rescheduleAppointments(
+    doctorId: number,
+    dto: RescheduleAppointmentDto,
+  ) {}
 
   private calculateReportingTime(
     timeslot: DoctorTimeSlot,
