@@ -43,6 +43,9 @@ export class DoctorTimeSlot {
   @Column({ type: 'int' })
   max_patients: number;
 
+  @Column({ type: 'boolean', default: false })
+  is_deleted: boolean;
+
   @CreateDateColumn()
   created_at: Date;
 

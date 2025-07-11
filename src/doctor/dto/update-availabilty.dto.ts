@@ -5,49 +5,48 @@ import {
   ArrayNotEmpty,
   IsDate,
   IsOptional,
-  IsNotEmpty,
   IsMilitaryTime,
 } from 'class-validator';
 import { Session, Weekday } from '../enums/availability.enums';
 import { Type } from 'class-transformer';
 
-export class CreateDoctorAvailabilityDto {
+export class UpdateDoctorAvailabilityDto {
   @IsOptional()
   @Type(() => Date)
   @IsDate()
   date?: Date;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
   @IsMilitaryTime()
-  consulting_start_time: string;
+  consulting_start_time?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
   @IsMilitaryTime()
-  consulting_end_time: string;
+  consulting_end_time?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsEnum(Session)
-  session: Session;
+  session?: Session;
 
-  @IsNotEmpty()
+  @IsOptional()
   @Type(() => Date)
   @IsDate()
-  booking_start_date: Date;
+  booking_start_date?: Date;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsMilitaryTime()
-  booking_start_time: string;
+  booking_start_time?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @Type(() => Date)
   @IsDate()
-  booking_end_date: Date;
+  booking_end_date?: Date;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsMilitaryTime()
-  booking_end_time: string;
+  booking_end_time?: string;
 
   @IsOptional()
   @IsArray()

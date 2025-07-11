@@ -2,7 +2,12 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
+  Patch,
+  Param,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -13,12 +18,29 @@ import { Request } from 'express';
 import { JwtPayload } from 'src/auth/auth.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt.guard';
 import { UserRole } from 'src/auth/enums/user.enums';
+import { AppointmentStatus } from './enums/appointment-status.enum';
 
 @Controller('api/v1/appointments')
 @UseGuards(JwtAuthGuard)
 export class AppointmentController {
   constructor(private readonly appointmentService: AppointmentService) {}
-  @Post('create')
+
+  @Get()
+  @HttpCode(HttpStatus.OK)
+  async viewAppointments(
+    @Req() req: Request,
+    @Query('status') status?: AppointmentStatus,
+  ) {
+    const user = req.user as JwtPayload;
+    return this.appointmentService.viewAppointments(
+      user.sub,
+      user.role,
+      status,
+    );
+  }
+
+  @Post('new')
+  @HttpCode(HttpStatus.CREATED)
   async createAppointment(
     @Body() createAppointmentDto: CreateAppointmentDto,
     @Req() req: Request,
@@ -34,9 +56,17 @@ export class AppointmentController {
     );
   }
 
-  @Get('view')
-  async viewAppointments(@Req() req: Request) {
+  @Patch(':appointmentId/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancelAppointment(
+    @Req() req: Request,
+    @Param('appointmentId') appointmentId: number,
+  ) {
     const user = req.user as JwtPayload;
-    return this.appointmentService.viewAppointments(user.sub, user.role);
+    return this.appointmentService.cancelAppointment(
+      appointmentId,
+      user.sub,
+      user.role,
+    );
   }
 }

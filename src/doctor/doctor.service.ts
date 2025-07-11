@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, FindOptionsWhere } from 'typeorm';
+import { Repository, ILike, FindOptionsWhere, Not, In } from 'typeorm';
 import { Doctor } from 'src/doctor/entities/doctor.entity';
 import { CreateDoctorAvailabilityDto } from './dto/create-availability.dto';
 import { CreateTimeslotDto } from './dto/create-timeslot.dto';
@@ -14,6 +14,9 @@ import { DoctorAvailability } from './entities/doctor-availability.entity';
 import { DoctorTimeSlot } from './entities/doctor-time-slot.entity';
 import { TimeSlotStatus, Weekday } from './enums/availability.enums';
 import { ScheduleType } from './enums/schedule-type.enums';
+import { UpdateTimeslotDto } from './dto/update-timeslot.dto';
+import { Appointment } from 'src/appointment/entities/appointment.entity';
+import { UpdateDoctorAvailabilityDto } from './dto/update-availabilty.dto';
 
 @Injectable()
 export class DoctorService {
@@ -23,7 +26,9 @@ export class DoctorService {
     @InjectRepository(DoctorAvailability)
     private availabilityRepo: Repository<DoctorAvailability>,
     @InjectRepository(DoctorTimeSlot)
-    private timeSlotRepo: Repository<DoctorTimeSlot>,
+    private timeslotRepo: Repository<DoctorTimeSlot>,
+    @InjectRepository(Appointment)
+    private appointmentRepo: Repository<Appointment>,
   ) {}
 
   async getProfile(doctorId: number) {
@@ -97,7 +102,8 @@ export class DoctorService {
     }
   }
 
-  async createAvailability(doctorId: number, dto: CreateDoctorAvailabilityDto) {
+  // Availability management
+  async newAvailability(doctorId: number, dto: CreateDoctorAvailabilityDto) {
     try {
       const { bookingStartAt, bookingEndAt } =
         this.validateAvailabilityDates(dto);
@@ -116,6 +122,7 @@ export class DoctorService {
             doctor: { user_id: doctorId },
             date: date,
             session: dto.session,
+            is_deleted: false,
           },
         });
 
@@ -184,7 +191,161 @@ export class DoctorService {
     }
   }
 
-  async createTimeslots(doctorId: number, dto: CreateTimeslotDto) {
+  async updateAvailabilty(
+    doctorId: number,
+    availabilityId: number,
+    dto: UpdateDoctorAvailabilityDto,
+  ): Promise<{ message: string; availability_id: number }> {
+    try {
+      const availability = await this.availabilityRepo.findOne({
+        where: {
+          availability_id: availabilityId,
+          doctor: { user_id: doctorId },
+          is_deleted: false,
+        },
+        relations: ['doctor', 'time_slots'],
+      });
+
+      if (!availability) {
+        throw new NotFoundException('Availability not found');
+      }
+
+      // Check if there are any time slots associated with this availability
+      if (availability.time_slots.length > 0) {
+        throw new ConflictException(
+          'Cannot update availability that has associated time slots',
+        );
+      }
+
+      // Check if there are any appointments in this availability's slots
+      const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
+
+      if (slotIds.length > 0) {
+        const appointmentsCount = await this.appointmentRepo.count({
+          where: {
+            time_slot: {
+              timeslot_id: In(slotIds),
+            },
+          },
+        });
+
+        if (appointmentsCount > 0) {
+          throw new ConflictException(
+            'Cannot update availability that have appointments',
+          );
+        }
+      }
+
+      // Apply updates — only update what exists in DTO
+      if (dto.consulting_start_time) {
+        availability.consulting_start_time = dto.consulting_start_time;
+      }
+
+      if (dto.consulting_end_time) {
+        availability.consulting_end_time = dto.consulting_end_time;
+      }
+
+      if (dto.session) {
+        availability.session = dto.session;
+      }
+
+      if (dto.date) {
+        availability.date = dto.date;
+      }
+
+      if (dto.weekdays) {
+        availability.weekdays = dto.weekdays;
+      }
+
+      if (dto.booking_start_date && dto.booking_start_time) {
+        availability.booking_start_at = this.combineDateAndTime(
+          dto.booking_start_date,
+          dto.booking_start_time,
+        );
+      }
+
+      if (dto.booking_end_date && dto.booking_end_time) {
+        availability.booking_end_at = this.combineDateAndTime(
+          dto.booking_end_date,
+          dto.booking_end_time,
+        );
+      }
+
+      await this.availabilityRepo.save(availability);
+
+      return {
+        message: 'Availabilty Updated Successfully',
+        availability_id: availability.availability_id,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error updating availability');
+    }
+  }
+
+  async softDeleteAvailability(
+    doctorId: number,
+    availabilityId: number,
+  ): Promise<{ message: string; availability_id: number }> {
+    const availability = await this.availabilityRepo.findOne({
+      where: {
+        availability_id: availabilityId,
+        doctor: { user_id: doctorId },
+        is_deleted: false,
+      },
+      relations: ['doctor', 'time_slots'],
+    });
+
+    if (!availability) {
+      throw new NotFoundException('Availability not found');
+    }
+
+    // Check if there are any time slots associated with this availability
+    if (availability.time_slots.length > 0) {
+      throw new ConflictException(
+        'Cannot update availability that has associated time slots',
+      );
+    }
+
+    const slotIds = availability.time_slots.map((slot) => slot.timeslot_id);
+
+    if (slotIds.length > 0) {
+      const appointmentCount = await this.appointmentRepo.count({
+        where: {
+          time_slot: {
+            timeslot_id: In(slotIds),
+          },
+        },
+      });
+
+      if (appointmentCount > 0) {
+        throw new BadRequestException(
+          'Cannot delete availability that have appointments',
+        );
+      }
+    }
+
+    availability.is_deleted = true;
+
+    for (const slot of availability.time_slots) {
+      slot.is_deleted = true;
+    }
+
+    await this.availabilityRepo.save(availability);
+
+    return {
+      message: 'Availability deleted successfully',
+      availability_id: availability.availability_id,
+    };
+  }
+
+  // Timeslot management
+  async newTimeslot(doctorId: number, dto: CreateTimeslotDto) {
     try {
       const doctor = await this.doctorRepo.findOne({
         where: {
@@ -200,29 +361,48 @@ export class DoctorService {
       }
 
       const availability = await this.availabilityRepo.findOne({
-        where: { availability_id: dto.availability_id },
+        where: {
+          availability_id: dto.availability_id,
+          doctor: { user_id: doctorId },
+          is_deleted: false,
+        },
       });
 
       if (!availability) throw new NotFoundException('Availability not found');
 
-      if (
-        dto.start_time > dto.end_time ||
-        dto.start_time > availability.consulting_end_time ||
-        dto.end_time > availability.consulting_end_time ||
-        dto.start_time < availability.consulting_start_time
-      )
-        throw new BadRequestException('Invalid start or end time');
+      if (dto.start_time >= dto.end_time) {
+        throw new BadRequestException('Start time must be before end time');
+      }
+      const padTime = (t: string) => (t.length === 5 ? t + ':00' : t);
 
-      const overlappingTimeslots = await this.timeSlotRepo.find({
+      if (
+        padTime(dto.start_time) < availability.consulting_start_time ||
+        padTime(dto.start_time) >= availability.consulting_end_time
+      ) {
+        throw new BadRequestException(
+          'start_time must be within availability hours',
+        );
+      }
+
+      if (
+        padTime(dto.end_time) <= availability.consulting_start_time ||
+        padTime(dto.end_time) > availability.consulting_end_time
+      ) {
+        throw new BadRequestException(
+          'end_time must be within availability hours',
+        );
+      }
+
+      const existingTimeslots = await this.timeslotRepo.find({
         where: {
           doctor: { user_id: doctorId },
           availability: { availability_id: dto.availability_id },
+          is_deleted: false,
         },
       });
 
       // Check if any existing time slot overlaps with the new one
-      const padTime = (t: string) => (t.length === 5 ? t + ':00' : t);
-      const hasOverlap = overlappingTimeslots.some((slot) => {
+      const hasOverlap = existingTimeslots.some((slot) => {
         const dtoStart = padTime(dto.start_time);
         const dtoEnd = padTime(dto.end_time);
         return dtoStart < slot.end_time && dtoEnd > slot.start_time;
@@ -230,7 +410,7 @@ export class DoctorService {
 
       if (hasOverlap) {
         // Find the conflicting slot for better error message
-        const conflictingSlot = overlappingTimeslots.find((slot) => {
+        const conflictingSlot = existingTimeslots.find((slot) => {
           const dtoStart = padTime(dto.start_time);
           const dtoEnd = padTime(dto.end_time);
           return dtoStart < slot.end_time && dtoEnd > slot.start_time;
@@ -240,7 +420,7 @@ export class DoctorService {
           `Time slot (${dto.start_time}-${dto.end_time}) overlaps with existing time slot (${conflictingSlot?.start_time}-${conflictingSlot?.end_time})`,
         );
       }
-      const newTimeslot = this.timeSlotRepo.create({
+      const newTimeslot = this.timeslotRepo.create({
         doctor,
         availability,
         date: availability.date,
@@ -252,7 +432,7 @@ export class DoctorService {
         status: TimeSlotStatus.AVAILABLE,
       });
 
-      const savedTimeslot = await this.timeSlotRepo.save(newTimeslot);
+      const savedTimeslot = await this.timeslotRepo.save(newTimeslot);
 
       return {
         message: 'Time slot created successfully',
@@ -274,24 +454,180 @@ export class DoctorService {
       ) {
         throw error;
       }
-      console.log(error);
       throw new InternalServerErrorException('Error creating time slots');
     }
   }
 
-  async getAvailableTimeSlots(doctorId: number, page: number, limit: number) {
-    const doctor = await this.doctorRepo.findOne({
-      where: { user_id: doctorId },
-    });
-    if (!doctor) {
-      throw new BadRequestException('Invalid doctor ID');
-    }
-
+  async updateTimeslot(
+    doctorId: number,
+    timeslotId: number,
+    dto: UpdateTimeslotDto,
+  ) {
     try {
-      const [slots, count] = await this.timeSlotRepo.findAndCount({
+      const timeslot = await this.timeslotRepo.findOne({
+        where: {
+          timeslot_id: timeslotId,
+          doctor: { user_id: doctorId },
+          is_deleted: false,
+        },
+        relations: ['availability', 'availability.time_slots'],
+      });
+
+      if (!timeslot) {
+        throw new NotFoundException('Time slot not found');
+      }
+
+      const availability = timeslot.availability;
+
+      const otherSlotIds = availability.time_slots.map(
+        (slot) => slot.timeslot_id,
+      );
+      const appointmentsCount = await this.appointmentRepo.count({
+        where: {
+          time_slot: {
+            timeslot_id: In(otherSlotIds),
+          },
+        },
+      });
+      if (appointmentsCount > 0) {
+        throw new ConflictException(
+          'Cannot update timeslot of a availability that have appointments',
+        );
+      }
+
+      const padTime = (t: string) => (t.length === 5 ? t + ':00' : t);
+      if (dto.start_time) {
+        if (
+          padTime(dto.start_time) < availability.consulting_start_time ||
+          padTime(dto.start_time) >= availability.consulting_end_time
+        ) {
+          throw new BadRequestException('Invalid start time');
+        }
+      }
+      if (dto.end_time) {
+        if (
+          padTime(dto.end_time) <= availability.consulting_start_time ||
+          padTime(dto.end_time) > availability.consulting_end_time
+        ) {
+          throw new BadRequestException('Invalid end time');
+        }
+      }
+      if (dto.start_time && dto.end_time) {
+        if (dto.start_time >= dto.end_time) {
+          throw new BadRequestException('Start time must be before end time');
+        }
+        const existingTimeslots = await this.timeslotRepo.find({
+          where: {
+            doctor: { user_id: doctorId },
+            availability: { availability_id: availability.availability_id },
+            is_deleted: false,
+            timeslot_id: Not(timeslotId), // Exclude the current timeslot
+          },
+        });
+
+        // Checking if any existing time slot overlaps with the new one
+        const hasOverlap = existingTimeslots.some((slot) => {
+          const dtoStart = padTime(dto.start_time!);
+          const dtoEnd = padTime(dto.end_time!);
+          return dtoStart < slot.end_time && dtoEnd > slot.start_time;
+        });
+
+        if (hasOverlap) {
+          const conflictingSlot = existingTimeslots.find((slot) => {
+            const dtoStart = padTime(dto.start_time!);
+            const dtoEnd = padTime(dto.end_time!);
+            return dtoStart < slot.end_time && dtoEnd > slot.start_time;
+          });
+
+          throw new ConflictException(
+            `Time slot (${dto.start_time}-${dto.end_time}) overlaps with existing time slot (${conflictingSlot?.start_time}-${conflictingSlot?.end_time})`,
+          );
+        }
+      }
+      if (dto.start_time) timeslot.start_time = dto.start_time;
+      if (dto.end_time) timeslot.end_time = dto.end_time;
+      if (dto.max_patients) timeslot.max_patients = dto.max_patients;
+      const updatedTimeslot = await this.timeslotRepo.save(timeslot);
+
+      return {
+        message: 'Time slot updated successfully',
+        data: {
+          timeslot_id: updatedTimeslot.timeslot_id,
+          date: updatedTimeslot.date,
+          session: updatedTimeslot.session,
+          start_time: updatedTimeslot.start_time,
+          end_time: updatedTimeslot.end_time,
+          max_patients: updatedTimeslot.max_patients,
+          status: updatedTimeslot.status,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error updating time slot');
+    }
+  }
+
+  async softDeleteTimeslot(doctorId: number, timeslotId: number) {
+    try {
+      const timeslot = await this.timeslotRepo.findOne({
+        where: {
+          timeslot_id: timeslotId,
+          doctor: { user_id: doctorId },
+          is_deleted: false,
+        },
+        relations: ['availability', 'availability.time_slots'],
+      });
+
+      if (!timeslot) {
+        throw new NotFoundException('Time slot not found');
+      }
+
+      const availability = timeslot.availability;
+      const otherSlotIds = availability.time_slots.map(
+        (slot) => slot.timeslot_id,
+      );
+
+      const appointmentsCount = await this.appointmentRepo.count({
+        where: {
+          time_slot: {
+            timeslot_id: In(otherSlotIds),
+          },
+        },
+      });
+
+      if (appointmentsCount > 0) {
+        throw new ConflictException(
+          'Cannot delete timeslot of a availability that have appointments',
+        );
+      }
+
+      timeslot.is_deleted = true;
+      await this.timeslotRepo.save(timeslot);
+      return { message: 'Timeslot deleted successfully' };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Error deleting time slot');
+    }
+  }
+
+  async getAvailableTimeSlots(doctorId: number, page: number, limit: number) {
+    try {
+      const [slots, count] = await this.timeslotRepo.findAndCount({
         where: {
           doctor: { user_id: doctorId },
           status: TimeSlotStatus.AVAILABLE,
+          is_deleted: false,
         },
         order: { date: 'ASC', session: 'ASC', start_time: 'ASC' },
         skip: (page - 1) * limit,
@@ -354,6 +690,7 @@ export class DoctorService {
     }
   }
 
+  // Helper functions
   private generateDatesForWeekdays(
     weekdays: Weekday[],
     weeksAhead: number,
@@ -394,9 +731,20 @@ export class DoctorService {
 
   private combineDateAndTime(date: Date, timeStr: string): Date {
     const [hours, minutes] = timeStr.split(':').map(Number);
-    const result = new Date(date);
-    result.setHours(hours, minutes, 0, 0);
-    return result;
+
+    const istDate = new Date(
+      Date.UTC(
+        date.getFullYear(),
+        date.getMonth(),
+        date.getDate(),
+        hours - 5,
+        minutes - 30,
+        0,
+        0,
+      ),
+    );
+
+    return istDate;
   }
 
   private validateAvailabilityDates(dto: CreateDoctorAvailabilityDto) {
